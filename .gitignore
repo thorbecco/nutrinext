@@ -5,7 +5,7 @@ nutrigen.db
 food.parquet
 
 # Logo uploads degli utenti (si rigenerano dal DB)
-logos/logo_*.png
+logos/logo_[0-9]*.png
 
 # Env locale con credenziali
 .env
