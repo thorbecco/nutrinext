@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m py_compile app.py)",
+      "Bash(python3 -m py_compile database.py)",
+      "Bash(python3 -c \"import pdfplumber; print\\('✅ pdfplumber ok'\\)\")",
+      "Bash(pip show *)",
+      "Bash(pip3 show *)",
+      "Bash(find /Users/air/Desktop /Users/air/Downloads -name \"*.png\" -o -name \"*.jpg\" 2>/dev/null | grep -i nutri | head -10)",
+      "Bash(file /Users/air/Desktop/Nutrigen/Logo/*.jpg)",
+      "Bash(sed -i '' 's/def find_user_by_email\\(email: str\\) -> dict | None:/def find_user_by_email\\(email: str\\):/' /Users/air/Desktop/Nutrigen/database.py)",
+      "Bash(sed -i '' 's/def find_patient_by_email\\(email: str\\) -> dict | None:/def find_patient_by_email\\(email: str\\):/' /Users/air/Desktop/Nutrigen/database.py)",
+      "Bash(python3 -c \"import database; print\\('OK'\\)\")",
+      "Bash(python3)",
+      "Bash(find /Users/air -name \"nutrigen.db\" 2>/dev/null)",
+      "Bash(python3 -c \"from PIL import Image; img = Image.open\\('/Users/air/Desktop/Nutrigen/logos/icon.png'\\); print\\(img.size\\)\")",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}

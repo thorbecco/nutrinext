@@ -1,0 +1,879 @@
+"""
+NutriNext Pro — Database layer
+Supporta PostgreSQL (produzione) e SQLite (sviluppo locale).
+Configura DATABASE_URL come variabile d'ambiente per usare PostgreSQL.
+"""
+
+import os
+import sqlite3
+import hashlib
+import secrets
+import string
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+
+# ── Carica .env se presente ───────────────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_POSTGRES = bool(DATABASE_URL)
+# Path assoluto → il DB è sempre nella cartella dell'app, indipendentemente da dove si lancia
+DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nutrigen.db")
+
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.pool
+    _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+
+
+# ==============================================================================
+# CONNECTION CONTEXT MANAGER
+# ==============================================================================
+
+class _Cursor:
+    """Wrapper che normalizza sqlite3 e psycopg2 (placeholder, lastrowid)."""
+    def __init__(self, cur, conn, use_pg):
+        self._cur  = cur
+        self._conn = conn
+        self._pg   = use_pg
+
+    def execute(self, sql, params=()):
+        if not self._pg:
+            sql = sql.replace("%s", "?")
+        self._cur.execute(sql, params)
+        return self
+
+    def executemany(self, sql, seq):
+        if not self._pg:
+            sql = sql.replace("%s", "?")
+        self._cur.executemany(sql, seq)
+        return self
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    @property
+    def lastrowid(self):
+        if self._pg:
+            row = self._cur.fetchone()
+            return row[0] if row else None
+        return self._cur.lastrowid
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+@contextmanager
+def _conn():
+    if USE_POSTGRES:
+        con = _pg_pool.getconn()
+        con.autocommit = False
+        try:
+            cur = con.cursor()
+            yield _Cursor(cur, con, True)
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            cur.close()
+            _pg_pool.putconn(con)
+    else:
+        con = sqlite3.connect(DB_FILE, check_same_thread=False)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys = ON")
+        try:
+            cur = con.cursor()
+            yield _Cursor(cur, con, False)
+            con.commit()
+        finally:
+            cur.close()
+            con.close()
+
+
+def _row_to_dict(row):
+    if row is None:
+        return {}
+    if isinstance(row, dict):
+        return row
+    if hasattr(row, "keys"):           # sqlite3.Row
+        return dict(row)
+    if USE_POSTGRES:
+        # psycopg2 restituisce tuple — usiamo description del cursor
+        return row
+    return dict(row)
+
+
+# ==============================================================================
+# INIT / MIGRATION
+# ==============================================================================
+
+def _pg_init(cur):
+    stmts = [
+        """CREATE TABLE IF NOT EXISTS users (
+            id               SERIAL PRIMARY KEY,
+            username         TEXT UNIQUE NOT NULL,
+            password_hash    TEXT NOT NULL,
+            nome             TEXT NOT NULL,
+            cognome          TEXT DEFAULT '',
+            role             TEXT NOT NULL CHECK(role IN ('nutritionist','patient','superadmin')),
+            studio_code      TEXT UNIQUE,
+            sesso_nut        TEXT DEFAULT 'M',
+            specializzazione TEXT DEFAULT 'Nutrizionista',
+            email_studio     TEXT DEFAULT '',
+            telefono         TEXT DEFAULT '',
+            logo_path        TEXT DEFAULT '',
+            logo_data        TEXT DEFAULT '',
+            last_login       TIMESTAMPTZ,
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS invite_tokens (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+            token            TEXT UNIQUE NOT NULL,
+            expires_at       TIMESTAMPTZ NOT NULL,
+            used             INTEGER DEFAULT 0,
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS patient_requests (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+            nome             TEXT NOT NULL,
+            cognome          TEXT DEFAULT '',
+            email            TEXT DEFAULT '',
+            sesso            TEXT,
+            data_nascita     TEXT,
+            username         TEXT NOT NULL,
+            password_hash    TEXT NOT NULL,
+            stato            TEXT DEFAULT 'In attesa',
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS patients (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+            username         TEXT UNIQUE,
+            password_hash    TEXT,
+            nome             TEXT NOT NULL,
+            cognome          TEXT DEFAULT '',
+            email            TEXT DEFAULT '',
+            sesso            TEXT CHECK(sesso IN ('M','F')),
+            data_nascita     TEXT,
+            telefono         TEXT DEFAULT '',
+            note_anamnesi    TEXT DEFAULT '',
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS appointments (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+            patient_id       INTEGER REFERENCES patients(id),
+            patient_name     TEXT,
+            data_ora         TEXT NOT NULL,
+            durata_min       INTEGER DEFAULT 60,
+            tipo             TEXT DEFAULT 'Prima Visita',
+            note             TEXT DEFAULT '',
+            stato            TEXT DEFAULT 'Programmato',
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS visits (
+            id        SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            data      TEXT NOT NULL,
+            peso REAL, altezza REAL, eta INTEGER, sesso TEXT,
+            R REAL, Xc REAL,
+            PhA REAL, TBW REAL, ECW REAL, ICW REAL,
+            FFM REAL, FM REAL, FM_perc REAL,
+            BCM REAL, SMM REAL, ASMM REAL, BMR INTEGER,
+            pliche_tricipitale REAL DEFAULT 0,
+            pliche_bicipitale REAL DEFAULT 0,
+            pliche_sottoscapolare REAL DEFAULT 0,
+            pliche_soprailiaca REAL DEFAULT 0,
+            pliche_addominale REAL DEFAULT 0,
+            pliche_coscia REAL DEFAULT 0,
+            pliche_ascellare REAL DEFAULT 0,
+            note TEXT DEFAULT '',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS diet_plans (
+            id         SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            visit_id   INTEGER REFERENCES visits(id),
+            nome       TEXT DEFAULT 'Piano attivo',
+            note       TEXT DEFAULT '',
+            is_active  INTEGER DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS diet_items (
+            id       SERIAL PRIMARY KEY,
+            plan_id  INTEGER NOT NULL REFERENCES diet_plans(id) ON DELETE CASCADE,
+            giorno TEXT, pasto TEXT, alimento TEXT, quantita REAL DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS messages (
+            id         SERIAL PRIMARY KEY,
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            ruolo      TEXT NOT NULL,
+            testo      TEXT NOT NULL,
+            timestamp  TIMESTAMPTZ DEFAULT NOW(),
+            letto      INTEGER DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS templates (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+            nome             TEXT NOT NULL,
+            note             TEXT DEFAULT '',
+            items_json       TEXT DEFAULT '[]',
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS bug_reports (
+            id               SERIAL PRIMARY KEY,
+            nutritionist_id  INTEGER REFERENCES users(id),
+            titolo           TEXT NOT NULL,
+            descrizione      TEXT NOT NULL,
+            categoria        TEXT DEFAULT 'Generale',
+            priorita         TEXT DEFAULT 'Media',
+            stato            TEXT DEFAULT 'Aperto',
+            admin_note       TEXT DEFAULT '',
+            created_at       TIMESTAMPTZ DEFAULT NOW(),
+            resolved_at      TIMESTAMPTZ
+        )""",
+    ]
+    for stmt in stmts:
+        cur.execute(stmt)
+
+
+def _sqlite_init(cur):
+    cur._cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        username         TEXT UNIQUE NOT NULL,
+        password_hash    TEXT NOT NULL,
+        nome             TEXT NOT NULL,
+        cognome          TEXT DEFAULT '',
+        role             TEXT NOT NULL CHECK(role IN ('nutritionist','patient','superadmin')),
+        studio_code      TEXT UNIQUE,
+        sesso_nut        TEXT DEFAULT 'M',
+        specializzazione TEXT DEFAULT 'Nutrizionista',
+        email_studio     TEXT DEFAULT '',
+        telefono         TEXT DEFAULT '',
+        logo_path        TEXT DEFAULT '',
+        logo_data        TEXT DEFAULT '',
+        last_login       TEXT,
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS invite_tokens (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+        token            TEXT UNIQUE NOT NULL,
+        expires_at       TEXT NOT NULL,
+        used             INTEGER DEFAULT 0,
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS patient_requests (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+        nome             TEXT NOT NULL,
+        cognome          TEXT DEFAULT '',
+        email            TEXT DEFAULT '',
+        sesso            TEXT,
+        data_nascita     TEXT,
+        username         TEXT NOT NULL,
+        password_hash    TEXT NOT NULL,
+        stato            TEXT DEFAULT 'In attesa',
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS patients (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+        username         TEXT UNIQUE,
+        password_hash    TEXT,
+        nome             TEXT NOT NULL,
+        cognome          TEXT DEFAULT '',
+        email            TEXT DEFAULT '',
+        sesso            TEXT CHECK(sesso IN ('M','F')),
+        data_nascita     TEXT,
+        telefono         TEXT DEFAULT '',
+        note_anamnesi    TEXT DEFAULT '',
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS appointments (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+        patient_id       INTEGER REFERENCES patients(id),
+        patient_name     TEXT,
+        data_ora         TEXT NOT NULL,
+        durata_min       INTEGER DEFAULT 60,
+        tipo             TEXT DEFAULT 'Prima Visita',
+        note             TEXT DEFAULT '',
+        stato            TEXT DEFAULT 'Programmato',
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS visits (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        patient_id INTEGER NOT NULL REFERENCES patients(id),
+        data TEXT NOT NULL,
+        peso REAL, altezza REAL, eta INTEGER, sesso TEXT,
+        R REAL, Xc REAL,
+        PhA REAL, TBW REAL, ECW REAL, ICW REAL,
+        FFM REAL, FM REAL, FM_perc REAL,
+        BCM REAL, SMM REAL, ASMM REAL, BMR INTEGER,
+        pliche_tricipitale REAL DEFAULT 0,
+        pliche_bicipitale REAL DEFAULT 0,
+        pliche_sottoscapolare REAL DEFAULT 0,
+        pliche_soprailiaca REAL DEFAULT 0,
+        pliche_addominale REAL DEFAULT 0,
+        pliche_coscia REAL DEFAULT 0,
+        pliche_ascellare REAL DEFAULT 0,
+        note TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS diet_plans (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        patient_id INTEGER NOT NULL REFERENCES patients(id),
+        visit_id   INTEGER REFERENCES visits(id),
+        nome       TEXT DEFAULT 'Piano attivo',
+        note       TEXT DEFAULT '',
+        is_active  INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS diet_items (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id  INTEGER NOT NULL REFERENCES diet_plans(id) ON DELETE CASCADE,
+        giorno TEXT, pasto TEXT, alimento TEXT, quantita REAL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        patient_id INTEGER NOT NULL REFERENCES patients(id),
+        ruolo      TEXT NOT NULL,
+        testo      TEXT NOT NULL,
+        timestamp  TEXT DEFAULT (datetime('now')),
+        letto      INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS templates (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER NOT NULL REFERENCES users(id),
+        nome             TEXT NOT NULL,
+        note             TEXT DEFAULT '',
+        items_json       TEXT DEFAULT '[]',
+        created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS bug_reports (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nutritionist_id  INTEGER REFERENCES users(id),
+        titolo           TEXT NOT NULL,
+        descrizione      TEXT NOT NULL,
+        categoria        TEXT DEFAULT 'Generale',
+        priorita         TEXT DEFAULT 'Media',
+        stato            TEXT DEFAULT 'Aperto',
+        admin_note       TEXT DEFAULT '',
+        created_at       TEXT DEFAULT (datetime('now')),
+        resolved_at      TEXT
+    );
+    """)
+    # Migration colonne mancanti
+    _migrations = [
+        ("users", "studio_code",      "TEXT"),
+        ("users", "sesso_nut",        "TEXT DEFAULT 'M'"),
+        ("users", "specializzazione", "TEXT DEFAULT 'Nutrizionista'"),
+        ("users", "email_studio",     "TEXT DEFAULT ''"),
+        ("users", "telefono",         "TEXT DEFAULT ''"),
+        ("users", "logo_path",        "TEXT DEFAULT ''"),
+        ("users", "logo_data",        "TEXT DEFAULT ''"),
+        ("users", "last_login",       "TEXT"),
+    ]
+    for table, col, typedef in _migrations:
+        try:
+            cur._cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass
+
+
+def init_db():
+    with _conn() as cur:
+        if USE_POSTGRES:
+            _pg_init(cur)
+        else:
+            _sqlite_init(cur)
+
+
+def _fetchall(cur) -> list:
+    rows = cur.fetchall()
+    if not rows:
+        return []
+    if USE_POSTGRES:
+        cols = [d[0] for d in cur._cur.description]
+        return [dict(zip(cols, r)) for r in rows]
+    return [dict(r) for r in rows]
+
+
+def _fetchone(cur) -> dict:
+    row = cur.fetchone()
+    if not row:
+        return {}
+    if USE_POSTGRES:
+        cols = [d[0] for d in cur._cur.description]
+        return dict(zip(cols, row))
+    return dict(row)
+
+
+# ==============================================================================
+# AUTH
+# ==============================================================================
+
+def _hash(pw: str) -> str:
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+def _gen_studio_code() -> str:
+    chars = string.ascii_uppercase + string.digits
+    while True:
+        code = "".join(secrets.choice(chars) for _ in range(6))
+        with _conn() as cur:
+            cur.execute("SELECT 1 FROM users WHERE studio_code=%s", (code,))
+            if not cur.fetchone():
+                return code
+
+def setup_nutritionist(username, password, nome, cognome="",
+                       sesso_nut="M", specializzazione="Nutrizionista",
+                       email_studio="", telefono=""):
+    code = _gen_studio_code()
+    ret  = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        cur.execute(
+            f"""INSERT INTO users
+               (username,password_hash,nome,cognome,role,studio_code,
+                sesso_nut,specializzazione,email_studio,telefono)
+               VALUES (%s,%s,%s,%s,'nutritionist',%s,%s,%s,%s,%s){ret}""",
+            (username, _hash(password), nome, cognome, code,
+             sesso_nut, specializzazione, email_studio, telefono)
+        )
+
+def update_nutritionist_profile(user_id, nome, cognome, sesso_nut,
+                                 specializzazione, email_studio, telefono,
+                                 logo_path=None):
+    with _conn() as cur:
+        if logo_path is not None:
+            cur.execute("""UPDATE users SET nome=%s,cognome=%s,sesso_nut=%s,specializzazione=%s,
+                email_studio=%s,telefono=%s,logo_path=%s WHERE id=%s""",
+                (nome,cognome,sesso_nut,specializzazione,email_studio,telefono,logo_path,user_id))
+        else:
+            cur.execute("""UPDATE users SET nome=%s,cognome=%s,sesso_nut=%s,specializzazione=%s,
+                email_studio=%s,telefono=%s WHERE id=%s""",
+                (nome,cognome,sesso_nut,specializzazione,email_studio,telefono,user_id))
+
+def has_nutritionist() -> bool:
+    with _conn() as cur:
+        cur.execute("SELECT 1 FROM users WHERE role='nutritionist' LIMIT 1")
+        return bool(cur.fetchone())
+
+def has_superadmin() -> bool:
+    with _conn() as cur:
+        cur.execute("SELECT 1 FROM users WHERE role='superadmin' LIMIT 1")
+        return bool(cur.fetchone())
+
+def setup_superadmin(username, password, nome, cognome=""):
+    ret = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        cur.execute(
+            f"INSERT INTO users (username,password_hash,nome,cognome,role) VALUES (%s,%s,%s,%s,'superadmin'){ret}",
+            (username, _hash(password), nome, cognome)
+        )
+
+def login(username: str, password: str):
+    with _conn() as cur:
+        cur.execute("SELECT * FROM users WHERE username=%s AND password_hash=%s",
+            (username, _hash(password)))
+        row = _fetchone(cur)
+        if row:
+            # Aggiorna last_login
+            with _conn() as cur2:
+                cur2.execute("UPDATE users SET last_login=%s WHERE id=%s",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M"), row["id"]))
+            return row
+    with _conn() as cur:
+        cur.execute(
+            """SELECT p.*, u.username as nut_username FROM patients p
+               JOIN users u ON u.id=p.nutritionist_id
+               WHERE p.username=%s AND p.password_hash=%s""",
+            (username, _hash(password))
+        )
+        row = _fetchone(cur)
+        return {"_patient": True, **row} if row else None
+
+def get_nutritionist(nut_id: int) -> dict:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM users WHERE id=%s", (nut_id,))
+        return _fetchone(cur)
+
+def save_logo_data(user_id: int, b64: str):
+    with _conn() as cur:
+        cur.execute("UPDATE users SET logo_data=%s WHERE id=%s", (b64, user_id))
+
+def get_logo_data(user_id: int) -> str:
+    with _conn() as cur:
+        cur.execute("SELECT logo_data FROM users WHERE id=%s", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row else ""
+
+def get_nutritionist_by_code(code: str) -> dict:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM users WHERE studio_code=%s AND role='nutritionist'",
+            (code.upper().strip(),))
+        return _fetchone(cur)
+
+
+# ==============================================================================
+# PATIENTS
+# ==============================================================================
+
+def get_patients(nutritionist_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM patients WHERE nutritionist_id=%s ORDER BY cognome,nome",
+            (nutritionist_id,))
+        return _fetchall(cur)
+
+def get_patient(patient_id: int) -> dict:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM patients WHERE id=%s", (patient_id,))
+        return _fetchone(cur)
+
+def save_patient(nutritionist_id, nome, cognome, email, sesso, data_nascita,
+                 telefono, note_anamnesi, username="", password="", patient_id=None):
+    ph  = _hash(password) if password else None
+    ret = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        if patient_id:
+            if password:
+                cur.execute("""UPDATE patients SET nome=%s,cognome=%s,email=%s,sesso=%s,
+                    data_nascita=%s,telefono=%s,note_anamnesi=%s,username=%s,password_hash=%s
+                    WHERE id=%s""",
+                    (nome,cognome,email,sesso,data_nascita,telefono,note_anamnesi,username,ph,patient_id))
+            else:
+                cur.execute("""UPDATE patients SET nome=%s,cognome=%s,email=%s,sesso=%s,
+                    data_nascita=%s,telefono=%s,note_anamnesi=%s,username=%s WHERE id=%s""",
+                    (nome,cognome,email,sesso,data_nascita,telefono,note_anamnesi,username,patient_id))
+        else:
+            cur.execute(
+                f"""INSERT INTO patients
+                    (nutritionist_id,nome,cognome,email,sesso,data_nascita,
+                     telefono,note_anamnesi,username,password_hash)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s){ret}""",
+                (nutritionist_id,nome,cognome,email,sesso,data_nascita,
+                 telefono,note_anamnesi,username,ph)
+            )
+            return cur.lastrowid
+
+
+# ==============================================================================
+# APPOINTMENTS
+# ==============================================================================
+
+def get_appointments(nutritionist_id: int, from_date=None, to_date=None) -> list:
+    with _conn() as cur:
+        if from_date and to_date:
+            cur.execute(
+                "SELECT * FROM appointments WHERE nutritionist_id=%s AND data_ora BETWEEN %s AND %s ORDER BY data_ora",
+                (nutritionist_id, from_date, to_date))
+        else:
+            cur.execute("SELECT * FROM appointments WHERE nutritionist_id=%s ORDER BY data_ora",
+                (nutritionist_id,))
+        return _fetchall(cur)
+
+def save_appointment(nutritionist_id, patient_id, patient_name, data_ora,
+                     durata_min, tipo, note, stato, appt_id=None):
+    ret = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        if appt_id:
+            cur.execute("""UPDATE appointments SET patient_id=%s,patient_name=%s,data_ora=%s,
+                durata_min=%s,tipo=%s,note=%s,stato=%s WHERE id=%s""",
+                (patient_id,patient_name,data_ora,durata_min,tipo,note,stato,appt_id))
+        else:
+            cur.execute(
+                f"""INSERT INTO appointments
+                    (nutritionist_id,patient_id,patient_name,data_ora,durata_min,tipo,note,stato)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s){ret}""",
+                (nutritionist_id,patient_id,patient_name,data_ora,durata_min,tipo,note,stato))
+
+def delete_appointment(appt_id: int):
+    with _conn() as cur:
+        cur.execute("DELETE FROM appointments WHERE id=%s", (appt_id,))
+
+
+# ==============================================================================
+# VISITS
+# ==============================================================================
+
+def save_visit(patient_id, data, peso, altezza, eta, sesso, R, Xc,
+               bia: dict, bmr, pliche: dict, note=""):
+    ret = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        cur.execute(
+            f"""INSERT INTO visits
+                (patient_id,data,peso,altezza,eta,sesso,R,Xc,
+                 PhA,TBW,ECW,ICW,FFM,FM,FM_perc,BCM,SMM,ASMM,BMR,
+                 pliche_tricipitale,pliche_bicipitale,pliche_sottoscapolare,
+                 pliche_soprailiaca,pliche_addominale,pliche_coscia,pliche_ascellare,note)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s){ret}""",
+            (patient_id,data,peso,altezza,eta,sesso,R,Xc,
+             bia["PhA"],bia["TBW"],bia["ECW"],bia["ICW"],
+             bia["FFM"],bia["FM"],bia["FM%"],bia["BCM"],bia["SMM"],bia["ASMM"],bmr,
+             pliche.get("tricipitale",0),pliche.get("bicipitale",0),
+             pliche.get("sottoscapolare",0),pliche.get("soprailiaca",0),
+             pliche.get("addominale",0),pliche.get("coscia",0),pliche.get("ascellare",0),note))
+        return cur.lastrowid
+
+def get_visits(patient_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM visits WHERE patient_id=%s ORDER BY data DESC", (patient_id,))
+        return _fetchall(cur)
+
+def get_latest_visit(patient_id: int) -> dict:
+    visits = get_visits(patient_id)
+    return visits[0] if visits else {}
+
+
+# ==============================================================================
+# DIET PLANS
+# ==============================================================================
+
+def get_active_plan(patient_id: int) -> dict:
+    with _conn() as cur:
+        cur.execute("""SELECT * FROM diet_plans WHERE patient_id=%s AND is_active=1
+            ORDER BY created_at DESC LIMIT 1""", (patient_id,))
+        return _fetchone(cur)
+
+def get_plan_items(plan_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM diet_items WHERE plan_id=%s ORDER BY giorno,pasto", (plan_id,))
+        return _fetchall(cur)
+
+def save_plan(patient_id, items: list, note="", nome="Piano attivo", visit_id=None) -> int:
+    ret = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        cur.execute("UPDATE diet_plans SET is_active=0 WHERE patient_id=%s", (patient_id,))
+        cur.execute(
+            f"INSERT INTO diet_plans (patient_id,visit_id,nome,note,is_active) VALUES (%s,%s,%s,%s,1){ret}",
+            (patient_id, visit_id, nome, note))
+        plan_id = cur.lastrowid
+        for item in items:
+            cur.execute(
+                "INSERT INTO diet_items (plan_id,giorno,pasto,alimento,quantita) VALUES (%s,%s,%s,%s,%s)",
+                (plan_id, item.get("Giorno"), item.get("Pasto"),
+                 item.get("Alimento"), item.get("Quantità", 0)))
+        return plan_id
+
+
+# ==============================================================================
+# MESSAGES
+# ==============================================================================
+
+def get_messages(patient_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM messages WHERE patient_id=%s ORDER BY timestamp", (patient_id,))
+        return _fetchall(cur)
+
+def send_message(patient_id: int, ruolo: str, testo: str):
+    with _conn() as cur:
+        cur.execute("INSERT INTO messages (patient_id,ruolo,testo) VALUES (%s,%s,%s)",
+            (patient_id, ruolo, testo))
+    mark_read(patient_id, "Nutrizionista" if ruolo == "Paziente" else "Paziente")
+
+def mark_read(patient_id: int, ruolo_destinatario: str):
+    with _conn() as cur:
+        cur.execute("UPDATE messages SET letto=1 WHERE patient_id=%s AND ruolo!=%s AND letto=0",
+            (patient_id, ruolo_destinatario))
+
+def unread_count(patient_id: int, ruolo_destinatario: str) -> int:
+    with _conn() as cur:
+        cur.execute("SELECT COUNT(*) FROM messages WHERE patient_id=%s AND ruolo!=%s AND letto=0",
+            (patient_id, ruolo_destinatario))
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+# ==============================================================================
+# TEMPLATES
+# ==============================================================================
+
+def get_templates(nutritionist_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM templates WHERE nutritionist_id=%s ORDER BY nome", (nutritionist_id,))
+        return _fetchall(cur)
+
+def save_template(nutritionist_id, nome, note, items_json):
+    with _conn() as cur:
+        cur.execute("SELECT 1 FROM templates WHERE nutritionist_id=%s AND nome=%s", (nutritionist_id, nome))
+        if cur.fetchone():
+            cur.execute("UPDATE templates SET note=%s,items_json=%s WHERE nutritionist_id=%s AND nome=%s",
+                (note, items_json, nutritionist_id, nome))
+        else:
+            cur.execute("INSERT INTO templates (nutritionist_id,nome,note,items_json) VALUES (%s,%s,%s,%s)",
+                (nutritionist_id, nome, note, items_json))
+
+def delete_template(template_id: int):
+    with _conn() as cur:
+        cur.execute("DELETE FROM templates WHERE id=%s", (template_id,))
+
+
+# ==============================================================================
+# INVITE TOKENS
+# ==============================================================================
+
+def create_invite_token(nutritionist_id: int, days_valid: int = 7) -> str:
+    token   = secrets.token_urlsafe(24)
+    expires = (datetime.now() + timedelta(days=days_valid)).strftime("%Y-%m-%d %H:%M")
+    with _conn() as cur:
+        cur.execute("INSERT INTO invite_tokens (nutritionist_id,token,expires_at) VALUES (%s,%s,%s)",
+            (nutritionist_id, token, expires))
+    return token
+
+def get_token_info(token: str) -> dict:
+    with _conn() as cur:
+        ts = "NOW()" if USE_POSTGRES else "datetime('now')"
+        cur.execute(
+            f"""SELECT t.*, u.nome, u.cognome, u.studio_code FROM invite_tokens t
+                JOIN users u ON u.id=t.nutritionist_id
+                WHERE t.token=%s AND t.used=0 AND t.expires_at > {ts}""", (token,))
+        return _fetchone(cur)
+
+def use_token(token: str):
+    with _conn() as cur:
+        cur.execute("UPDATE invite_tokens SET used=1 WHERE token=%s", (token,))
+
+
+# ==============================================================================
+# PATIENT REQUESTS
+# ==============================================================================
+
+def submit_patient_request(nutritionist_id, nome, cognome, email, sesso,
+                            data_nascita, username, password):
+    with _conn() as cur:
+        cur.execute("SELECT 1 FROM patients WHERE username=%s", (username,))
+        if cur.fetchone():
+            return False, "Username già in uso."
+        cur.execute("SELECT 1 FROM patient_requests WHERE username=%s", (username,))
+        if cur.fetchone():
+            return False, "Richiesta già inviata con questo username."
+        cur.execute("""INSERT INTO patient_requests
+            (nutritionist_id,nome,cognome,email,sesso,data_nascita,username,password_hash)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (nutritionist_id,nome,cognome,email,sesso,data_nascita,username,_hash(password)))
+        return True, "Richiesta inviata. Il nutrizionista riceverà una notifica."
+
+def get_pending_requests(nutritionist_id: int) -> list:
+    with _conn() as cur:
+        cur.execute("""SELECT * FROM patient_requests WHERE nutritionist_id=%s AND stato='In attesa'
+            ORDER BY created_at DESC""", (nutritionist_id,))
+        return _fetchall(cur)
+
+def approve_request(request_id: int):
+    with _conn() as cur:
+        cur.execute("SELECT * FROM patient_requests WHERE id=%s", (request_id,))
+        req = _fetchone(cur)
+        if not req:
+            return
+    with _conn() as cur:
+        cur.execute("""INSERT INTO patients
+            (nutritionist_id,nome,cognome,email,sesso,data_nascita,username,password_hash)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (req["nutritionist_id"],req["nome"],req["cognome"],req["email"],
+             req["sesso"],req["data_nascita"],req["username"],req["password_hash"]))
+        cur.execute("UPDATE patient_requests SET stato='Approvato' WHERE id=%s", (request_id,))
+
+def reject_request(request_id: int):
+    with _conn() as cur:
+        cur.execute("UPDATE patient_requests SET stato='Rifiutato' WHERE id=%s", (request_id,))
+
+
+# ==============================================================================
+# BUG REPORTS
+# ==============================================================================
+
+def submit_bug(nutritionist_id, titolo, descrizione, categoria="Generale", priorita="Media"):
+    with _conn() as cur:
+        cur.execute("""INSERT INTO bug_reports
+            (nutritionist_id,titolo,descrizione,categoria,priorita)
+            VALUES (%s,%s,%s,%s,%s)""",
+            (nutritionist_id, titolo, descrizione, categoria, priorita))
+
+def get_all_bugs(stato=None) -> list:
+    with _conn() as cur:
+        if stato:
+            cur.execute("""SELECT b.*, u.nome as nut_nome, u.cognome as nut_cognome,
+                u.email_studio FROM bug_reports b
+                LEFT JOIN users u ON u.id=b.nutritionist_id
+                WHERE b.stato=%s ORDER BY b.created_at DESC""", (stato,))
+        else:
+            cur.execute("""SELECT b.*, u.nome as nut_nome, u.cognome as nut_cognome,
+                u.email_studio FROM bug_reports b
+                LEFT JOIN users u ON u.id=b.nutritionist_id
+                ORDER BY b.created_at DESC""")
+        return _fetchall(cur)
+
+def update_bug(bug_id, stato, admin_note=""):
+    resolved = datetime.now().strftime("%Y-%m-%d %H:%M") if stato == "Risolto" else None
+    with _conn() as cur:
+        cur.execute("UPDATE bug_reports SET stato=%s,admin_note=%s,resolved_at=%s WHERE id=%s",
+            (stato, admin_note, resolved, bug_id))
+
+
+# ==============================================================================
+# ADMIN — statistiche
+# ==============================================================================
+
+def get_all_nutritionists() -> list:
+    with _conn() as cur:
+        cur.execute("""SELECT u.*,
+            (SELECT COUNT(*) FROM patients p WHERE p.nutritionist_id=u.id) as n_pazienti,
+            (SELECT COUNT(*) FROM diet_plans d JOIN patients p ON p.id=d.patient_id
+                WHERE p.nutritionist_id=u.id) as n_piani,
+            (SELECT COUNT(*) FROM bug_reports b WHERE b.nutritionist_id=u.id
+                AND b.stato='Aperto') as n_bug_aperti
+            FROM users u WHERE u.role='nutritionist'
+            ORDER BY u.created_at DESC""")
+        return _fetchall(cur)
+
+def get_platform_stats() -> dict:
+    with _conn() as cur:
+        stats = {}
+        for key, sql in [
+            ("tot_nutrizionisti", "SELECT COUNT(*) FROM users WHERE role='nutritionist'"),
+            ("tot_pazienti",      "SELECT COUNT(*) FROM patients"),
+            ("tot_piani",         "SELECT COUNT(*) FROM diet_plans"),
+            ("tot_visite",        "SELECT COUNT(*) FROM visits"),
+            ("tot_messaggi",      "SELECT COUNT(*) FROM messages"),
+            ("bug_aperti",        "SELECT COUNT(*) FROM bug_reports WHERE stato='Aperto'"),
+        ]:
+            cur.execute(sql)
+            row = cur.fetchone()
+            stats[key] = row[0] if row else 0
+        return stats
+
+# ==============================================================================
+# RECUPERO CREDENZIALI
+# ==============================================================================
+
+def find_user_by_email(email: str):
+    """Cerca un nutrizionista per email studio."""
+    with _conn() as cur:
+        cur.execute("SELECT * FROM users WHERE email_studio=%s AND role='nutritionist'", (email,))
+        return _fetchone(cur)
+
+def find_patient_by_email(email: str):
+    """Cerca un paziente per email."""
+    with _conn() as cur:
+        cur.execute("SELECT * FROM patients WHERE email=%s", (email,))
+        return _fetchone(cur)
+
+def reset_password(user_type: str, user_id: int, new_password: str):
+    """Aggiorna la password — user_type: 'nutritionist' o 'patient'."""
+    ph = _hash(new_password)
+    with _conn() as cur:
+        if user_type == "nutritionist":
+            cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (ph, user_id))
+        else:
+            cur.execute("UPDATE patients SET password_hash=%s WHERE id=%s", (ph, user_id))
