@@ -1222,15 +1222,19 @@ def page_setup():
             else:
                 db.setup_nutritionist(username, pw, nome, cognome,
                                       sesso_nut, spec, email_s, tel)
-                # Salva logo se caricato (l'id è 1 al primo avvio)
+                # Salva logo se caricato
                 if logo_file:
-                    import sqlite3 as _sq
-                    uid = _sq.connect("nutrigen.db").execute(
-                        "SELECT id FROM users WHERE username=?", (username,)
-                    ).fetchone()[0]
-                    logo_path = _salva_logo(logo_file, uid)
-                    db.update_nutritionist_profile(uid, nome, cognome, sesso_nut,
-                                                   spec, email_s, tel, logo_path=logo_path)
+                    nut_row = db.find_user_by_email(email_s) or db.get_nutritionist_by_code(
+                        next(iter([u["studio_code"] for u in db.get_all_nutritionists()
+                                   if u.get("username") == username]), ""))
+                    if not nut_row:
+                        # fallback: cerca per username tramite login
+                        nut_row = db.login(username, pw) or {}
+                    uid = nut_row.get("id")
+                    if uid:
+                        logo_path = _salva_logo(logo_file, uid)
+                        db.update_nutritionist_profile(uid, nome, cognome, sesso_nut,
+                                                       spec, email_s, tel, logo_path=logo_path)
                 st.success("Account creato! Effettua il login.")
                 st.rerun()
 
