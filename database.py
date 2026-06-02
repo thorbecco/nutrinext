@@ -27,7 +27,15 @@ DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nutrigen.db"
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.pool
-    _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+    _pg_pool = None
+
+def _get_pg_pool():
+    global _pg_pool
+    if not USE_POSTGRES:
+        return None
+    if _pg_pool is None:
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+    return _pg_pool
 
 
 # ==============================================================================
@@ -73,7 +81,7 @@ class _Cursor:
 @contextmanager
 def _conn():
     if USE_POSTGRES:
-        con = _pg_pool.getconn()
+        con = _get_pg_pool().getconn()
         con.autocommit = False
         try:
             cur = con.cursor()
@@ -84,7 +92,7 @@ def _conn():
             raise
         finally:
             cur.close()
-            _pg_pool.putconn(con)
+            _get_pg_pool().putconn(con)
     else:
         con = sqlite3.connect(DB_FILE, check_same_thread=False)
         con.row_factory = sqlite3.Row
