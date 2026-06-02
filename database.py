@@ -409,14 +409,20 @@ def init_db():
             _sqlite_init(cur)
 
 
+def _normalize(d: dict) -> dict:
+    """Convert datetime/date values to ISO strings for uniform handling."""
+    from datetime import datetime as _dt, date as _date
+    return {k: (v.isoformat() if isinstance(v, (_dt, _date)) else v) for k, v in d.items()}
+
+
 def _fetchall(cur) -> list:
     rows = cur.fetchall()
     if not rows:
         return []
     if USE_POSTGRES:
         cols = [d[0] for d in cur._cur.description]
-        return [dict(zip(cols, r)) for r in rows]
-    return [dict(r) for r in rows]
+        return [_normalize(dict(zip(cols, r))) for r in rows]
+    return [_normalize(dict(r)) for r in rows]
 
 
 def _fetchone(cur) -> dict:
@@ -425,8 +431,8 @@ def _fetchone(cur) -> dict:
         return {}
     if USE_POSTGRES:
         cols = [d[0] for d in cur._cur.description]
-        return dict(zip(cols, row))
-    return dict(row)
+        return _normalize(dict(zip(cols, row)))
+    return _normalize(dict(row))
 
 
 # ==============================================================================
