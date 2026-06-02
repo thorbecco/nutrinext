@@ -2617,6 +2617,7 @@ def sidebar_admin():
     nav = {
         "admin_overview":     "📊  Overview piattaforma",
         "admin_nutrizionisti":"👨‍⚕️  Nutrizionisti",
+        "admin_pazienti":     "👥  Cerca Pazienti",
         "admin_bugs":         "🐛  Bug Report",
     }
     for key, label in nav.items():
@@ -2687,6 +2688,33 @@ def page_admin_nutrizionisti():
             c4.metric("Codice studio",  n.get("studio_code","—"))
             st.caption(f"Registrato: {str(n.get('created_at',''))[:10]}  ·  "
                        f"Ultimo accesso: {str(n.get('last_login','mai'))[:16]}")
+
+def page_admin_pazienti():
+    st.title("👥 Cerca Pazienti")
+    query = st.text_input("🔍 Cerca per nome, cognome o username", placeholder="es. Carlotta Lodolo")
+    if not query:
+        st.info("Inserisci almeno un termine per cercare.")
+        return
+    results = db.search_patients(query)
+    st.caption(f"{len(results)} risultati per «{query}»")
+    if not results:
+        st.warning("Nessun paziente trovato.")
+        return
+    for p in results:
+        nome_completo = f"{p.get('cognome','')} {p.get('nome','')}".strip()
+        nut = f"{p.get('nut_cognome','')} {p.get('nut_nome','')}".strip()
+        with st.expander(f"**{nome_completo}** — username: `{p.get('username','—')}` — Nutrizionista: {nut}"):
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"**Username:** `{p.get('username','—')}`")
+            c1.markdown(f"**Email:** {p.get('email','—')}")
+            c1.markdown(f"**Telefono:** {p.get('telefono','—')}")
+            c2.markdown(f"**Sesso:** {p.get('sesso','—')}")
+            c2.markdown(f"**Data nascita:** {p.get('data_nascita','—')}")
+            c2.markdown(f"**Registrato:** {str(p.get('created_at',''))[:10]}")
+            c3.markdown(f"**Nutrizionista:** {nut}")
+            c3.markdown(f"**Codice studio:** `{p.get('studio_code','—')}`")
+            c3.markdown(f"**Email studio:** {p.get('nut_email','—')}")
+
 
 def page_admin_bugs():
     st.title("🐛 Bug Report")
@@ -2766,6 +2794,8 @@ elif st.session_state.user.get("role") == "superadmin":
         page = st.session_state.get("page", "admin_overview")
         if page == "admin_nutrizionisti":
             page_admin_nutrizionisti()
+        elif page == "admin_pazienti":
+            page_admin_pazienti()
         elif page == "admin_bugs":
             page_admin_bugs()
         else:

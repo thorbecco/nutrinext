@@ -836,6 +836,36 @@ def update_bug(bug_id, stato, admin_note=""):
 
 
 # ==============================================================================
+# ADMIN — ricerca pazienti
+# ==============================================================================
+
+def search_patients(query: str) -> list:
+    """Cerca pazienti per nome, cognome o username su tutta la piattaforma."""
+    q = f"%{query.strip()}%"
+    with _conn() as cur:
+        cur.execute("""
+            SELECT p.id, p.nome, p.cognome, p.email, p.sesso, p.data_nascita,
+                   p.username, p.telefono, p.created_at,
+                   u.nome as nut_nome, u.cognome as nut_cognome,
+                   u.studio_code, u.email_studio as nut_email
+            FROM patients p
+            JOIN users u ON u.id = p.nutritionist_id
+            WHERE p.nome ILIKE %s OR p.cognome ILIKE %s OR p.username ILIKE %s
+            ORDER BY p.cognome, p.nome
+        """, (q, q, q)) if USE_POSTGRES else cur.execute("""
+            SELECT p.id, p.nome, p.cognome, p.email, p.sesso, p.data_nascita,
+                   p.username, p.telefono, p.created_at,
+                   u.nome as nut_nome, u.cognome as nut_cognome,
+                   u.studio_code, u.email_studio as nut_email
+            FROM patients p
+            JOIN users u ON u.id = p.nutritionist_id
+            WHERE p.nome LIKE %s OR p.cognome LIKE %s OR p.username LIKE %s
+            ORDER BY p.cognome, p.nome
+        """, (q, q, q))
+        return _fetchall(cur)
+
+
+# ==============================================================================
 # ADMIN — statistiche
 # ==============================================================================
 
