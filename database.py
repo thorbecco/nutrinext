@@ -140,6 +140,7 @@ def _pg_init(cur):
             logo_path        TEXT DEFAULT '',
             logo_data        TEXT DEFAULT '',
             last_login       TIMESTAMPTZ,
+            is_active        INTEGER DEFAULT 1,
             created_at       TIMESTAMPTZ DEFAULT NOW()
         )""",
         """CREATE TABLE IF NOT EXISTS invite_tokens (
@@ -272,6 +273,7 @@ def _sqlite_init(cur):
         logo_path        TEXT DEFAULT '',
         logo_data        TEXT DEFAULT '',
         last_login       TEXT,
+        is_active        INTEGER DEFAULT 1,
         created_at       TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS invite_tokens (
@@ -393,6 +395,7 @@ def _sqlite_init(cur):
         ("users", "logo_path",        "TEXT DEFAULT ''"),
         ("users", "logo_data",        "TEXT DEFAULT ''"),
         ("users", "last_login",       "TEXT"),
+        ("users", "is_active",        "INTEGER DEFAULT 1"),
     ]
     for table, col, typedef in _migrations:
         try:
@@ -503,6 +506,8 @@ def login(username: str, password: str):
             (username, _hash(password)))
         row = _fetchone(cur)
         if row:
+            if row.get("is_active", 1) == 0:
+                return {"_suspended": True}
             # Aggiorna last_login
             with _conn() as cur2:
                 cur2.execute("UPDATE users SET last_login=%s WHERE id=%s",
@@ -921,3 +926,98 @@ def reset_password(user_type: str, user_id: int, new_password: str):
             cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (ph, user_id))
         else:
             cur.execute("UPDATE patients SET password_hash=%s WHERE id=%s", (ph, user_id))
+
+
+# ==============================================================================
+# ADMIN — gestione utenti (sospensione / eliminazione)
+# ==============================================================================
+
+def set_nutritionist_active(nut_id: int, active: bool):
+    """Sospende (active=False) o riattiva (active=True) un nutrizionista."""
+    with _conn() as cur:
+        cur.execute("UPDATE users SET is_active=%s WHERE id=%s", (1 if active else 0, nut_id))
+
+def delete_nutritionist_admin(nut_id: int):
+    """Elimina un nutrizionista e tutti i suoi dati (CASCADE)."""
+    with _conn() as cur:
+        # Elimina in ordine per rispettare FK
+        cur.execute("""DELETE FROM messages WHERE patient_id IN
+            (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
+        cur.execute("""DELETE FROM diet_items WHERE plan_id IN
+            (SELECT dp.id FROM diet_plans dp JOIN patients p ON p.id=dp.patient_id
+             WHERE p.nutritionist_id=%s)""", (nut_id,))
+        cur.execute("""DELETE FROM diet_plans WHERE patient_id IN
+            (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
+        cur.execute("""DELETE FROM visits WHERE patient_id IN
+            (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
+        cur.execute("DELETE FROM patients WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM appointments WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM templates WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM invite_tokens WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM patient_requests WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM bug_reports WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM users WHERE id=%s", (nut_id,))
+
+def delete_patient_admin(patient_id: int):
+    """Elimina un paziente e tutti i suoi dati."""
+    with _conn() as cur:
+        cur.execute("DELETE FROM messages WHERE patient_id=%s", (patient_id,))
+        cur.execute("""DELETE FROM diet_items WHERE plan_id IN
+            (SELECT id FROM diet_plans WHERE patient_id=%s)""", (patient_id,))
+        cur.execute("DELETE FROM diet_plans WHERE patient_id=%s", (patient_id,))
+        cur.execute("DELETE FROM visits WHERE patient_id=%s", (patient_id,))
+        cur.execute("DELETE FROM patients WHERE id=%s", (patient_id,))
+
+
+# ==============================================================================
+# EMAIL — recupero credenziali
+# ==============================================================================
+
+def send_credentials_email(to_email: str, username: str, new_password: str,
+                            app_url: str = "") -> tuple[bool, str]:
+    """Invia email con username e nuova password generata automaticamente.
+    Richiede env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_pass:
+        return False, "Servizio email non configurato. Contatta l'amministratore."
+
+    body = f"""Ciao,
+
+Hai richiesto il recupero delle credenziali di accesso a NutriNext.
+
+Le tue credenziali aggiornate sono:
+
+  Username:  {username}
+  Password:  {new_password}
+
+{"Puoi accedere all'app qui: " + app_url if app_url else ""}
+
+Ti consigliamo di cambiare la password dopo il primo accesso.
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    msg = MIMEMultipart()
+    msg["From"]    = smtp_from
+    msg["To"]      = to_email
+    msg["Subject"] = "NutriNext — Recupero credenziali"
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_from, [to_email], msg.as_string())
+        return True, "Email inviata con successo."
+    except Exception as e:
+        return False, f"Errore invio email: {e}"

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from fpdf import FPDF
-import json, math, os, io, base64
+import json, math, os, io, base64, secrets
 from datetime import datetime, date, timedelta
 
 # Path assoluto della cartella dell'app (necessario per st.image con path relativi)
@@ -336,6 +336,43 @@ def _safe(text: str) -> str:
 # Colore primario PDF (bordeaux come nel modello)
 _PDF_R, _PDF_G, _PDF_B = 123, 30, 43   # #7B1E2B
 
+# Ordine canonico dei pasti nel PDF
+_PASTO_ORDER = ["Colazione","Spuntino Mattina","Spuntino","Pranzo",
+                "Merenda","Spuntino Pomeriggio","Cena","Pre-Nanna"]
+
+class _NutriPDF(FPDF):
+    """FPDF personalizzata con footer NutriNext su ogni pagina."""
+    def __init__(self, titolo_nut="", nome_paz=""):
+        super().__init__()
+        self._titolo_nut = titolo_nut
+        self._nome_paz   = nome_paz
+        self._skip_footer_page = 1   # salta footer sulla copertina
+
+    def footer(self):
+        if self.page_no() == self._skip_footer_page:
+            return
+        self.set_y(-14)
+        # Logo NutriNext piccolo a sinistra
+        logo_footer = _img("logos/default_logo.png")
+        if os.path.exists(logo_footer):
+            try:
+                self.image(logo_footer, x=20, y=self.get_y()-1, h=8)
+            except Exception:
+                pass
+        # Testo centrato
+        self.set_font("Arial", "I", 7)
+        self.set_text_color(160, 160, 160)
+        testo = _safe(f"{self._titolo_nut}  |  {self._nome_paz}  |  {datetime.now().strftime('%d/%m/%Y')}")
+        self.set_x(30)
+        self.cell(150, 5, testo, align="C")
+        # "NutriNext" a destra
+        self.set_font("Arial", "B", 7)
+        self.set_text_color(_PDF_R, _PDF_G, _PDF_B)
+        self.set_x(0)
+        self.cell(190, 5, "NutriNext Pro", align="R")
+        self.set_text_color(0, 0, 0)
+
+
 def _titolo_sezione(pdf, testo: str):
     """Titolo di sezione in bordeaux grassetto, stile modello."""
     pdf.set_font("Arial", "B", 11)
@@ -361,7 +398,8 @@ def _titolo_nutrizionista(nut: dict) -> str:
     return f"{prefisso} {nut.get('nome','')} {nut.get('cognome','')}".strip()
 
 def genera_pdf_dieta(items, note, paziente: dict = None,
-                     nutrizionista: dict = None, visita: dict = None):
+                     nutrizionista: dict = None, visita: dict = None,
+                     freq_proteiche: str = ""):
     paz  = paziente     or {}
     nut  = nutrizionista or {}
     vis  = visita       or {}
@@ -369,7 +407,7 @@ def genera_pdf_dieta(items, note, paziente: dict = None,
     titolo_nut = _safe(_titolo_nutrizionista(nut))
     spec_nut   = _safe(nut.get("specializzazione",""))
 
-    pdf = FPDF()
+    pdf = _NutriPDF(titolo_nut=titolo_nut, nome_paz=nome_paz)
     pdf.set_margins(20, 20, 20)
 
     # ── COPERTINA ──────────────────────────────────────────────────────────────
@@ -427,7 +465,17 @@ def genera_pdf_dieta(items, note, paziente: dict = None,
             line = line.strip()
             if not line:
                 pdf.ln(2); continue
-            # Bullet automatico per righe che non iniziano con "-"
+            prefix = "" if line.startswith("-") else ""
+            pdf.multi_cell(0, 6, f"{prefix}{line}", align="L")
+        pdf.ln(5)
+
+    if freq_proteiche and freq_proteiche.strip():
+        _titolo_sezione(pdf, "FREQUENZA CONSUMO FONTI PROTEICHE:")
+        pdf.set_font("Arial", "", 10); pdf.set_text_color(0,0,0)
+        for line in _safe(freq_proteiche).split("\n"):
+            line = line.strip()
+            if not line:
+                pdf.ln(2); continue
             prefix = "" if line.startswith("-") else ""
             pdf.multi_cell(0, 6, f"{prefix}{line}", align="L")
         pdf.ln(5)
@@ -472,16 +520,22 @@ def genera_pdf_dieta(items, note, paziente: dict = None,
         key=lambda x: next((i for i,o in enumerate(ORDER_FULL) if o.lower()==x.lower()), 99))
 
     def _scrivi_giorno_pasti(pdf, giorno, voci_giorno):
-        """Scrive un giorno con i suoi pasti e alimenti."""
-        pdf.set_font("Arial", "B", 11)
-        pdf.set_text_color(_PDF_R, _PDF_G, _PDF_B)
-        pdf.cell(0, 8, _safe(giorno.upper() + ":"), ln=True)
-        pdf.set_text_color(0, 0, 0)
+        """Scrive un giorno con i suoi pasti e alimenti nell'ordine canonico."""
+        if giorno:
+            pdf.set_font("Arial", "B", 11)
+            pdf.set_text_color(_PDF_R, _PDF_G, _PDF_B)
+            pdf.cell(0, 8, _safe(giorno.upper() + ":"), ln=True)
+            pdf.set_text_color(0, 0, 0)
         pasti = {}
         for r in voci_giorno:
             p = str(r.get("Pasto", r.get("pasto", "Pasto")))
             pasti.setdefault(p, []).append(r)
-        for pasto, voci in pasti.items():
+        pasti_sorted = sorted(
+            pasti.items(),
+            key=lambda x: next((i for i, o in enumerate(_PASTO_ORDER)
+                                 if o.lower() == x[0].lower()), 99)
+        )
+        for pasto, voci in pasti_sorted:
             pdf.set_font("Arial", "BI", 9)
             pdf.cell(8, 5, "", ln=False)
             pdf.cell(0, 5, _safe(pasto + ":"), ln=True)
@@ -579,11 +633,6 @@ def genera_pdf_dieta(items, note, paziente: dict = None,
         _titolo_sezione(pdf, "DETTAGLIO GIORNALIERO")
         for giorno in giorni_sorted:
             _scrivi_giorno_pasti(pdf, giorno, giorni[giorno])
-
-    # Footer su ogni pagina
-    pdf.set_y(-15)
-    pdf.set_font("Arial", "I", 7); pdf.set_text_color(160,160,160)
-    pdf.cell(0, 5, _safe(f"{titolo_nut} - {nome_paz} - {datetime.now().strftime('%d/%m/%Y')}"), align="C")
 
     return pdf.output(dest="S").encode("latin-1")
 
@@ -1179,17 +1228,20 @@ def _salva_logo(logo_file, user_id: int) -> str:
     return path
 
 def _get_logo_path(user: dict) -> str:
-    """Restituisce il path del logo, ricostruendolo dal DB se il file non esiste."""
-    path = user.get("logo_path", "")
-    if path and os.path.exists(path):
-        return path
+    """Restituisce il path del logo, ricostruendolo dal DB se il file non esiste.
+    Usa /tmp per compatibilità con filesystem read-only (Railway)."""
     logo_b64 = user.get("logo_data") or db.get_logo_data(user.get("id", 0))
     if logo_b64:
-        os.makedirs(_img("logos"), exist_ok=True)
-        p = _img(f"logos/logo_{user.get('id',0)}.png")
+        tmp_dir = "/tmp/nutrigen_logos"
+        os.makedirs(tmp_dir, exist_ok=True)
+        p = os.path.join(tmp_dir, f"logo_{user.get('id',0)}.png")
         with open(p, "wb") as f:
             f.write(base64.b64decode(logo_b64))
         return p
+    # Fallback: logo_path salvato nel profilo
+    path = user.get("logo_path", "")
+    if path and os.path.exists(path):
+        return path
     return ""
 
 def page_setup():
@@ -1288,52 +1340,81 @@ def page_profilo():
         st.rerun()
 
 def _widget_recupero_credenziali():
-    """Expander per il recupero password — usato sia da nutrizionisti che pazienti."""
-    with st.expander("🔑 Hai dimenticato la password?"):
-        st.caption("Inserisci l'email associata al tuo account per reimpostare la password.")
+    """Expander per il recupero credenziali — invia email con username e nuova password."""
+    import smtplib as _smtp_check
+    smtp_configurato = bool(os.environ.get("SMTP_HOST"))
+
+    with st.expander("🔑 Hai dimenticato username o password?"):
         rec_tipo = st.radio("Tipo account", ["Nutrizionista", "Paziente"], horizontal=True,
                             key="rec_tipo")
-        rec_email = st.text_input("Email", placeholder="Es. mario.rossi@studio.it", key="rec_email")
+        rec_email = st.text_input("Email associata all'account",
+                                   placeholder="Es. mario.rossi@studio.it", key="rec_email")
 
-        if st.button("🔍 Trova account", key="btn_trova_account"):
-            if not rec_email.strip():
-                st.warning("Inserisci un'email.")
-            else:
-                if rec_tipo == "Nutrizionista":
-                    found = db.find_user_by_email(rec_email.strip())
+        if smtp_configurato:
+            st.caption("📧 Riceverai un'email con il tuo username e una nuova password temporanea.")
+            if st.button("📨 Invia credenziali via email", type="primary", key="btn_invia_credenziali"):
+                if not rec_email.strip():
+                    st.warning("Inserisci la tua email.")
                 else:
-                    found = db.find_patient_by_email(rec_email.strip())
-
-                if not found:
-                    st.error("Nessun account trovato con questa email.")
+                    if rec_tipo == "Nutrizionista":
+                        found = db.find_user_by_email(rec_email.strip())
+                    else:
+                        found = db.find_patient_by_email(rec_email.strip())
+                    if not found:
+                        st.error("Nessun account trovato con questa email.")
+                    else:
+                        # Genera nuova password automatica
+                        new_pw = secrets.token_urlsafe(8)
+                        tipo_db = "nutritionist" if rec_tipo == "Nutrizionista" else "patient"
+                        db.reset_password(tipo_db, found["id"], new_pw)
+                        app_url = os.environ.get("APP_URL", "")
+                        ok, msg = db.send_credentials_email(
+                            rec_email.strip(), found.get("username", ""), new_pw, app_url)
+                        if ok:
+                            st.success(f"✅ Email inviata a **{rec_email.strip()}** con username e nuova password.")
+                        else:
+                            st.error(f"Errore: {msg}")
+                            st.info(f"Username: `{found.get('username','')}` — contatta il tuo nutrizionista.")
+        else:
+            # Fallback: reset manuale se SMTP non configurato
+            st.caption("⚠️ Email non configurata. Imposta manualmente la password.")
+            if st.button("🔍 Trova account", key="btn_trova_account"):
+                if not rec_email.strip():
+                    st.warning("Inserisci un'email.")
                 else:
-                    st.session_state["_rec_id"]   = found["id"]
-                    st.session_state["_rec_tipo"]  = rec_tipo.lower()
-                    st.session_state["_rec_nome"]  = found.get("nome", "")
-                    st.success(
-                        f"Account trovato: **{found.get('nome','')} {found.get('cognome','')}** "
-                        f"— username: `{found.get('username','')}`"
-                    )
-
-        if st.session_state.get("_rec_id"):
-            st.divider()
-            st.markdown(f"**Imposta nuova password per {st.session_state['_rec_nome']}**")
-            np1 = st.text_input("Nuova password", type="password", key="rec_np1")
-            np2 = st.text_input("Conferma password", type="password", key="rec_np2")
-            if st.button("💾 Salva nuova password", type="primary", key="btn_salva_pw"):
-                if not np1:
-                    st.warning("Inserisci la nuova password.")
-                elif np1 != np2:
-                    st.error("Le password non coincidono.")
-                elif len(np1) < 6:
-                    st.warning("La password deve essere di almeno 6 caratteri.")
-                else:
-                    db.reset_password(st.session_state["_rec_tipo"],
-                                      st.session_state["_rec_id"], np1)
-                    st.success("✅ Password aggiornata. Puoi ora effettuare il login.")
-                    for k in ["_rec_id","_rec_tipo","_rec_nome"]:
-                        st.session_state.pop(k, None)
-                    st.rerun()
+                    if rec_tipo == "Nutrizionista":
+                        found = db.find_user_by_email(rec_email.strip())
+                    else:
+                        found = db.find_patient_by_email(rec_email.strip())
+                    if not found:
+                        st.error("Nessun account trovato con questa email.")
+                    else:
+                        st.session_state["_rec_id"]   = found["id"]
+                        st.session_state["_rec_tipo"]  = rec_tipo.lower()
+                        st.session_state["_rec_nome"]  = found.get("nome", "")
+                        st.success(
+                            f"Account trovato: **{found.get('nome','')} {found.get('cognome','')}** "
+                            f"— username: `{found.get('username','')}`"
+                        )
+            if st.session_state.get("_rec_id"):
+                st.divider()
+                st.markdown(f"**Imposta nuova password per {st.session_state['_rec_nome']}**")
+                np1 = st.text_input("Nuova password", type="password", key="rec_np1")
+                np2 = st.text_input("Conferma password", type="password", key="rec_np2")
+                if st.button("💾 Salva nuova password", type="primary", key="btn_salva_pw"):
+                    if not np1:
+                        st.warning("Inserisci la nuova password.")
+                    elif np1 != np2:
+                        st.error("Le password non coincidono.")
+                    elif len(np1) < 6:
+                        st.warning("La password deve essere di almeno 6 caratteri.")
+                    else:
+                        db.reset_password(st.session_state["_rec_tipo"],
+                                          st.session_state["_rec_id"], np1)
+                        st.success("✅ Password aggiornata. Puoi ora effettuare il login.")
+                        for k in ["_rec_id","_rec_tipo","_rec_nome"]:
+                            st.session_state.pop(k, None)
+                        st.rerun()
 
 
 def page_login():
@@ -1349,7 +1430,9 @@ def page_login():
         password = st.text_input("Password", type="password", placeholder="Inserisci password")
         if st.button("Accedi", type="primary", use_container_width=True):
             user = db.login(username, password)
-            if user:
+            if user and user.get("_suspended"):
+                st.error("⛔ Account sospeso. Contatta l'amministratore NutriNext.")
+            elif user:
                 if user.get("_patient"):
                     st.session_state.user = user
                     st.session_state.patient_obj = user
@@ -1650,6 +1733,8 @@ def _form_paziente(nutritionist_id, patient_id=None):
     if st.button("💾 Salva paziente", type="primary"):
         if not nome:
             st.error("Il nome è obbligatorio.")
+        elif uname and " " in uname:
+            st.error("Lo username non può contenere spazi.")
         else:
             db.save_patient(nutritionist_id, nome, cognome, email, sesso,
                 str(data_n), tel, note_a, uname, pw, patient_id)
@@ -1876,14 +1961,29 @@ def page_piano():
             placeholder="Es. Gli alimenti devono essere pesati a crudo...\nBere 2L di acqua al giorno..."
         )
 
+        # Frequenza consumo fonti proteiche — solo per dieta flessibile (Workout/Rest Day)
+        if "Workout" in scelta:
+            st.divider()
+            st.subheader("🥩 Frequenza Consumo Fonti Proteiche")
+            st.caption("Comparirà nel PDF subito dopo Spiegazioni e Consigli.")
+            if "freq_proteiche" not in st.session_state:
+                st.session_state.freq_proteiche = ""
+            st.session_state.freq_proteiche = st.text_area(
+                "Indica la frequenza delle fonti proteiche (carne, pesce, uova, legumi…):",
+                value=st.session_state.freq_proteiche, height=150,
+                placeholder="Es. Carne rossa: max 2 volte a settimana\nPesce: 3-4 volte a settimana\nUova: 3-4 a settimana..."
+            )
+
         st.divider()
 
         # Export in cima — disponibili subito prima della tabella
         if st.session_state.piano_corrente:
             ultima_vis = db.get_latest_visit(pid)
+            _freq_prot = st.session_state.get("freq_proteiche", "") if "Workout" in scelta else ""
             pdf_d = genera_pdf_dieta(
                 st.session_state.piano_corrente, st.session_state.note_piano,
-                paziente=p, nutrizionista=st.session_state.user, visita=ultima_vis)
+                paziente=p, nutrizionista=st.session_state.user, visita=ultima_vis,
+                freq_proteiche=_freq_prot)
             pdf_s = genera_pdf_spesa(
                 st.session_state.piano_corrente,
                 paziente=p, nutrizionista=st.session_state.user, visita=ultima_vis)
@@ -2390,6 +2490,8 @@ def _form_registrazione(nutritionist_id: int, token: str = ""):
     if st.button("✅ Registrati", type="primary", use_container_width=True):
         if not all([nome, username, pw1]):
             st.error("Compila tutti i campi obbligatori (*).")
+        elif " " in username:
+            st.error("Lo username non può contenere spazi.")
         elif pw1 != pw2:
             st.error("Le password non coincidono.")
         else:
@@ -2680,7 +2782,9 @@ def page_admin_nutrizionisti():
 
     st.caption(f"{len(nuts)} nutrizionisti")
     for n in nuts:
-        with st.expander(f"**{n.get('cognome','')} {n.get('nome','')}** — {n.get('specializzazione','')} — {n.get('email_studio','—')}"):
+        is_active = n.get("is_active", 1)
+        stato_label = "✅ Attivo" if is_active else "⛔ Sospeso"
+        with st.expander(f"{stato_label} — **{n.get('cognome','')} {n.get('nome','')}** — {n.get('specializzazione','')} — {n.get('email_studio','—')}"):
             c1,c2,c3,c4 = st.columns(4)
             c1.metric("Pazienti",       n.get("n_pazienti",0))
             c2.metric("Piani creati",   n.get("n_piani",0))
@@ -2688,6 +2792,29 @@ def page_admin_nutrizionisti():
             c4.metric("Codice studio",  n.get("studio_code","—"))
             st.caption(f"Registrato: {str(n.get('created_at',''))[:10]}  ·  "
                        f"Ultimo accesso: {str(n.get('last_login','mai'))[:16]}")
+            st.divider()
+            ba, bb, bc = st.columns(3)
+            if is_active:
+                if ba.button("⛔ Sospendi", key=f"sosp_{n['id']}", use_container_width=True):
+                    db.set_nutritionist_active(n["id"], False)
+                    st.success("Nutrizionista sospeso."); st.rerun()
+            else:
+                if ba.button("✅ Riattiva", key=f"riatt_{n['id']}", use_container_width=True, type="primary"):
+                    db.set_nutritionist_active(n["id"], True)
+                    st.success("Nutrizionista riattivato."); st.rerun()
+            # Eliminazione con doppia conferma
+            if not st.session_state.get(f"confirm_del_nut_{n['id']}"):
+                if bb.button("🗑️ Elimina", key=f"del_nut_{n['id']}", use_container_width=True):
+                    st.session_state[f"confirm_del_nut_{n['id']}"] = True; st.rerun()
+            else:
+                bb.warning(f"Eliminare **{n.get('nome','')}** e tutti i suoi dati?")
+                cd1, cd2 = st.columns(2)
+                if cd1.button("✅ Conferma eliminazione", key=f"confirm_yes_{n['id']}", type="primary"):
+                    db.delete_nutritionist_admin(n["id"])
+                    st.session_state.pop(f"confirm_del_nut_{n['id']}", None)
+                    st.success("Nutrizionista eliminato."); st.rerun()
+                if cd2.button("❌ Annulla", key=f"confirm_no_{n['id']}"):
+                    st.session_state.pop(f"confirm_del_nut_{n['id']}", None); st.rerun()
 
 def page_admin_pazienti():
     st.title("👥 Cerca Pazienti")
@@ -2714,6 +2841,19 @@ def page_admin_pazienti():
             c3.markdown(f"**Nutrizionista:** {nut}")
             c3.markdown(f"**Codice studio:** `{p.get('studio_code','—')}`")
             c3.markdown(f"**Email studio:** {p.get('nut_email','—')}")
+            st.divider()
+            if not st.session_state.get(f"confirm_del_paz_{p['id']}"):
+                if st.button("🗑️ Elimina paziente", key=f"del_paz_{p['id']}"):
+                    st.session_state[f"confirm_del_paz_{p['id']}"] = True; st.rerun()
+            else:
+                st.warning(f"Eliminare **{nome_completo}** e tutti i suoi dati (visite, piani, messaggi)?")
+                dp1, dp2 = st.columns(2)
+                if dp1.button("✅ Conferma eliminazione", key=f"delp_yes_{p['id']}", type="primary"):
+                    db.delete_patient_admin(p["id"])
+                    st.session_state.pop(f"confirm_del_paz_{p['id']}", None)
+                    st.success("Paziente eliminato."); st.rerun()
+                if dp2.button("❌ Annulla", key=f"delp_no_{p['id']}"):
+                    st.session_state.pop(f"confirm_del_paz_{p['id']}", None); st.rerun()
 
 
 def page_admin_bugs():
