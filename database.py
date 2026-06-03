@@ -975,22 +975,18 @@ def delete_patient_admin(patient_id: int):
 
 def send_credentials_email(to_email: str, username: str, new_password: str,
                             app_url: str = "") -> tuple[bool, str]:
-    """Invia email con username e nuova password generata automaticamente.
-    Richiede env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+    """Invia email con username e nuova password tramite Brevo API HTTP.
+    Richiede env: BREVO_API_KEY, SMTP_FROM."""
+    import urllib.request
+    import json as _json
 
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_pass = os.environ.get("SMTP_PASS", "")
-    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+    api_key   = os.environ.get("BREVO_API_KEY", "")
+    smtp_from = os.environ.get("SMTP_FROM", "noreply@nutrinext.app")
 
-    if not smtp_host or not smtp_user or not smtp_pass:
+    if not api_key:
         return False, "Servizio email non configurato. Contatta l'amministratore."
 
-    body = f"""Ciao,
+    body_text = f"""Ciao,
 
 Hai richiesto il recupero delle credenziali di accesso a NutriNext.
 
@@ -1006,25 +1002,29 @@ Ti consigliamo di cambiare la password dopo il primo accesso.
 Cordiali saluti,
 Il team NutriNext
 """
-    msg = MIMEMultipart()
-    msg["From"]    = smtp_from
-    msg["To"]      = to_email
-    msg["Subject"] = "NutriNext — Recupero credenziali"
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    payload = _json.dumps({
+        "sender":  {"name": "NutriNext", "email": smtp_from},
+        "to":      [{"email": to_email}],
+        "subject": "NutriNext — Recupero credenziali",
+        "textContent": body_text
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "api-key":      api_key,
+            "Content-Type": "application/json",
+            "Accept":       "application/json",
+        },
+        method="POST"
+    )
 
     try:
-        if smtp_port == 465:
-            import ssl as _ssl
-            ctx = _ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx, timeout=10) as server:
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_from, [to_email], msg.as_string())
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(smtp_from, [to_email], msg.as_string())
-        return True, "Email inviata con successo."
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status in (200, 201):
+                return True, "Email inviata con successo."
+            return False, f"Risposta Brevo: {resp.status}"
     except Exception as e:
         return False, f"Errore invio email: {e}"
