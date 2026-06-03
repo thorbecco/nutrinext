@@ -1340,81 +1340,51 @@ def page_profilo():
         st.rerun()
 
 def _widget_recupero_credenziali():
-    """Expander per il recupero credenziali — invia email con username e nuova password."""
-    import smtplib as _smtp_check
-    smtp_configurato = bool(os.environ.get("SMTP_HOST"))
-
+    """Expander per il recupero credenziali tramite reset manuale della password."""
     with st.expander("🔑 Hai dimenticato username o password?"):
-        rec_tipo = st.radio("Tipo account", ["Nutrizionista", "Paziente"], horizontal=True,
-                            key="rec_tipo")
-        rec_email = st.text_input("Email associata all'account",
-                                   placeholder="Es. mario.rossi@studio.it", key="rec_email")
+        st.caption("Inserisci l'email associata al tuo account per reimpostare la password.")
+        rec_tipo  = st.radio("Tipo account", ["Nutrizionista", "Paziente"], horizontal=True,
+                             key="rec_tipo")
+        rec_email = st.text_input("Email", placeholder="Es. mario.rossi@studio.it", key="rec_email")
 
-        if smtp_configurato:
-            st.caption("📧 Riceverai un'email con il tuo username e una nuova password temporanea.")
-            if st.button("📨 Invia credenziali via email", type="primary", key="btn_invia_credenziali"):
-                if not rec_email.strip():
-                    st.warning("Inserisci la tua email.")
+        if st.button("🔍 Trova account", key="btn_trova_account"):
+            if not rec_email.strip():
+                st.warning("Inserisci un'email.")
+            else:
+                if rec_tipo == "Nutrizionista":
+                    found = db.find_user_by_email(rec_email.strip())
                 else:
-                    if rec_tipo == "Nutrizionista":
-                        found = db.find_user_by_email(rec_email.strip())
-                    else:
-                        found = db.find_patient_by_email(rec_email.strip())
-                    if not found:
-                        st.error("Nessun account trovato con questa email.")
-                    else:
-                        # Genera nuova password automatica
-                        new_pw = secrets.token_urlsafe(8)
-                        tipo_db = "nutritionist" if rec_tipo == "Nutrizionista" else "patient"
-                        db.reset_password(tipo_db, found["id"], new_pw)
-                        app_url = os.environ.get("APP_URL", "")
-                        ok, msg = db.send_credentials_email(
-                            rec_email.strip(), found.get("username", ""), new_pw, app_url)
-                        if ok:
-                            st.success(f"✅ Email inviata a **{rec_email.strip()}** con username e nuova password.")
-                        else:
-                            st.error(f"Errore: {msg}")
-                            st.info(f"Username: `{found.get('username','')}` — contatta il tuo nutrizionista.")
-        else:
-            # Fallback: reset manuale se SMTP non configurato
-            st.caption("⚠️ Email non configurata. Imposta manualmente la password.")
-            if st.button("🔍 Trova account", key="btn_trova_account"):
-                if not rec_email.strip():
-                    st.warning("Inserisci un'email.")
+                    found = db.find_patient_by_email(rec_email.strip())
+                if not found:
+                    st.error("Nessun account trovato con questa email.")
                 else:
-                    if rec_tipo == "Nutrizionista":
-                        found = db.find_user_by_email(rec_email.strip())
-                    else:
-                        found = db.find_patient_by_email(rec_email.strip())
-                    if not found:
-                        st.error("Nessun account trovato con questa email.")
-                    else:
-                        st.session_state["_rec_id"]   = found["id"]
-                        st.session_state["_rec_tipo"]  = rec_tipo.lower()
-                        st.session_state["_rec_nome"]  = found.get("nome", "")
-                        st.success(
-                            f"Account trovato: **{found.get('nome','')} {found.get('cognome','')}** "
-                            f"— username: `{found.get('username','')}`"
-                        )
-            if st.session_state.get("_rec_id"):
-                st.divider()
-                st.markdown(f"**Imposta nuova password per {st.session_state['_rec_nome']}**")
-                np1 = st.text_input("Nuova password", type="password", key="rec_np1")
-                np2 = st.text_input("Conferma password", type="password", key="rec_np2")
-                if st.button("💾 Salva nuova password", type="primary", key="btn_salva_pw"):
-                    if not np1:
-                        st.warning("Inserisci la nuova password.")
-                    elif np1 != np2:
-                        st.error("Le password non coincidono.")
-                    elif len(np1) < 6:
-                        st.warning("La password deve essere di almeno 6 caratteri.")
-                    else:
-                        db.reset_password(st.session_state["_rec_tipo"],
-                                          st.session_state["_rec_id"], np1)
-                        st.success("✅ Password aggiornata. Puoi ora effettuare il login.")
-                        for k in ["_rec_id","_rec_tipo","_rec_nome"]:
-                            st.session_state.pop(k, None)
-                        st.rerun()
+                    st.session_state["_rec_id"]   = found["id"]
+                    st.session_state["_rec_tipo"]  = rec_tipo.lower()
+                    st.session_state["_rec_nome"]  = found.get("nome", "")
+                    st.success(
+                        f"Account trovato: **{found.get('nome','')} {found.get('cognome','')}** "
+                        f"— username: `{found.get('username','')}`"
+                    )
+
+        if st.session_state.get("_rec_id"):
+            st.divider()
+            st.markdown(f"**Imposta nuova password per {st.session_state['_rec_nome']}**")
+            np1 = st.text_input("Nuova password", type="password", key="rec_np1")
+            np2 = st.text_input("Conferma password", type="password", key="rec_np2")
+            if st.button("💾 Salva nuova password", type="primary", key="btn_salva_pw"):
+                if not np1:
+                    st.warning("Inserisci la nuova password.")
+                elif np1 != np2:
+                    st.error("Le password non coincidono.")
+                elif len(np1) < 6:
+                    st.warning("La password deve essere di almeno 6 caratteri.")
+                else:
+                    db.reset_password(st.session_state["_rec_tipo"],
+                                      st.session_state["_rec_id"], np1)
+                    st.success("✅ Password aggiornata. Puoi ora effettuare il login.")
+                    for k in ["_rec_id","_rec_tipo","_rec_nome"]:
+                        st.session_state.pop(k, None)
+                    st.rerun()
 
 
 def page_login():
