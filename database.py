@@ -535,8 +535,8 @@ def save_logo_data(user_id: int, b64: str):
 def get_logo_data(user_id: int) -> str:
     with _conn() as cur:
         cur.execute("SELECT logo_data FROM users WHERE id=%s", (user_id,))
-        row = cur.fetchone()
-        return row[0] if row else ""
+        row = _fetchone(cur)
+        return row.get("logo_data", "") if row else ""
 
 def get_nutritionist_by_code(code: str) -> dict:
     with _conn() as cur:
@@ -847,8 +847,8 @@ def update_bug(bug_id, stato, admin_note=""):
 def search_patients(query: str) -> list:
     """Cerca pazienti per nome, cognome o username su tutta la piattaforma."""
     q = f"%{query.strip()}%"
-    with _conn() as cur:
-        cur.execute("""
+    if USE_POSTGRES:
+        sql = """
             SELECT p.id, p.nome, p.cognome, p.email, p.sesso, p.data_nascita,
                    p.username, p.telefono, p.created_at,
                    u.nome as nut_nome, u.cognome as nut_cognome,
@@ -857,7 +857,9 @@ def search_patients(query: str) -> list:
             JOIN users u ON u.id = p.nutritionist_id
             WHERE p.nome ILIKE %s OR p.cognome ILIKE %s OR p.username ILIKE %s
             ORDER BY p.cognome, p.nome
-        """, (q, q, q)) if USE_POSTGRES else cur.execute("""
+        """
+    else:
+        sql = """
             SELECT p.id, p.nome, p.cognome, p.email, p.sesso, p.data_nascita,
                    p.username, p.telefono, p.created_at,
                    u.nome as nut_nome, u.cognome as nut_cognome,
@@ -866,7 +868,9 @@ def search_patients(query: str) -> list:
             JOIN users u ON u.id = p.nutritionist_id
             WHERE p.nome LIKE %s OR p.cognome LIKE %s OR p.username LIKE %s
             ORDER BY p.cognome, p.nome
-        """, (q, q, q))
+        """
+    with _conn() as cur:
+        cur.execute(sql, (q, q, q))
         return _fetchall(cur)
 
 

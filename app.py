@@ -324,6 +324,12 @@ def plot_biavector(R, Xc, altezza):
 # ==============================================================================
 # PDF
 # ==============================================================================
+
+def _dt_slice(val, start: int, end: int, fallback: str = "—") -> str:
+    """Estrae una slice da una stringa data/datetime in modo sicuro."""
+    s = str(val) if val else ""
+    return s[start:end] if len(s) >= end else fallback
+
 def _safe(text: str) -> str:
     """Sostituisce caratteri non latin-1 con equivalenti ASCII."""
     return (str(text)
@@ -1481,10 +1487,10 @@ def page_dashboard():
 
     oggi = date.today()
     appts_oggi = [a for a in db.get_appointments(user["id"])
-                  if a["data_ora"].startswith(str(oggi))]
+                  if str(a.get("data_ora","")).startswith(str(oggi))]
     pazienti    = db.get_patients(user["id"])
     appts_futuri = [a for a in db.get_appointments(user["id"])
-                    if a["data_ora"] > str(oggi) and a["stato"]=="Programmato"]
+                    if str(a.get("data_ora","")) > str(oggi) and a.get("stato")=="Programmato"]
 
     c1,c2,c3 = st.columns(3)
     c1.markdown(f"""<div class='metric-card'>
@@ -1508,9 +1514,9 @@ def page_dashboard():
         if not appts_oggi:
             st.info("Nessun appuntamento per oggi.")
         for a in sorted(appts_oggi, key=lambda x: x["data_ora"]):
-            ora = a["data_ora"][11:16]
-            col = COLORI_TIPO.get(a["tipo"],"#9e9e9e")
-            stato_css = a["stato"].lower()
+            ora = _dt_slice(a.get("data_ora"), 11, 16)
+            col = COLORI_TIPO.get(a.get("tipo",""),"#9e9e9e")
+            stato_css = a.get("stato","").lower()
             st.markdown(f"""<div class='appt-card {stato_css}' style='border-left-color:{col}'>
               <b>{ora}</b> — {a.get('patient_name','N/D')}
               <span style='float:right;font-size:0.8em;color:#888'>{a['tipo']} · {a['durata_min']}min</span>
@@ -1563,17 +1569,17 @@ def page_agenda():
     cells = ""
     for i in range(7):
         d = wstart + timedelta(days=i)
-        day_appts = [a for a in appts if a["data_ora"].startswith(str(d))]
-        day_appts.sort(key=lambda x: x["data_ora"])
+        day_appts = [a for a in appts if str(a.get("data_ora","")).startswith(str(d))]
+        day_appts.sort(key=lambda x: str(x.get("data_ora","")))
         content = ""
         for a in day_appts:
-            ora = a["data_ora"][11:16]
-            col = COLORI_TIPO.get(a["tipo"],"#9e9e9e")
-            op = "0.6" if a["stato"]=="Annullato" else "1"
+            ora = _dt_slice(a.get("data_ora"), 11, 16)
+            col = COLORI_TIPO.get(a.get("tipo",""),"#9e9e9e")
+            op = "0.6" if a.get("stato")=="Annullato" else "1"
             content += f"""<div style='background:{col};color:white;border-radius:6px;
               padding:5px 8px;margin-bottom:5px;font-size:0.8em;opacity:{op}'>
               <b>{ora}</b> {a.get('patient_name','—')}<br>
-              <span style='font-size:0.85em'>{a['tipo']}</span>
+              <span style='font-size:0.85em'>{a.get('tipo','')}</span>
             </div>"""
         if not content:
             content = "<div style='color:#ccc;font-size:0.8em;text-align:center;padding:10px'>—</div>"
@@ -1598,9 +1604,9 @@ def page_agenda():
     with st.expander("➕ Aggiungi / Modifica appuntamento", expanded=bool(appt_edit)):
         f1, f2 = st.columns(2)
         data_appt = f1.date_input("Data", value=date.today() if not appt_edit else
-            datetime.strptime(appt_edit["data_ora"][:10],"%Y-%m-%d").date())
+            datetime.strptime(_dt_slice(appt_edit.get("data_ora"), 0, 10, str(date.today())),"%Y-%m-%d").date())
         ora_appt  = f2.time_input("Ora", value=datetime.strptime(
-            appt_edit["data_ora"][11:16] if appt_edit else "09:00","%H:%M").time())
+            _dt_slice(appt_edit.get("data_ora"), 11, 16, "09:00") if appt_edit else "09:00","%H:%M").time())
 
         f3, f4 = st.columns(2)
         paz_sel   = f3.selectbox("Paziente", paz_nomi,
@@ -1639,10 +1645,11 @@ def page_agenda():
         st.info("Nessun appuntamento questa settimana.")
     for a in appts:
         c1, c2, c3 = st.columns([3,1,1])
-        ora = a["data_ora"][11:16]
-        giorno = datetime.strptime(a["data_ora"][:10],"%Y-%m-%d").strftime("%a %d/%m")
-        col = COLORI_TIPO.get(a["tipo"],"#9e9e9e")
-        c1.markdown(f"<span style='color:{col}'>●</span> **{giorno} {ora}** — {a.get('patient_name','—')} · {a['tipo']} · {a['durata_min']}min · *{a['stato']}*", unsafe_allow_html=True)
+        ora    = _dt_slice(a.get("data_ora"), 11, 16)
+        d_str  = _dt_slice(a.get("data_ora"), 0, 10, str(date.today()))
+        giorno = datetime.strptime(d_str, "%Y-%m-%d").strftime("%a %d/%m")
+        col = COLORI_TIPO.get(a.get("tipo",""),"#9e9e9e")
+        c1.markdown(f"<span style='color:{col}'>●</span> **{giorno} {ora}** — {a.get('patient_name','—')} · {a.get('tipo','—')} · {a.get('durata_min','—')}min · *{a.get('stato','—')}*", unsafe_allow_html=True)
         if c2.button("✏️", key=f"edit_{a['id']}"):
             st.session_state.edit_appt_id = a["id"]; st.rerun()
         if c3.button("🗑️", key=f"del_{a['id']}"):
@@ -2101,7 +2108,7 @@ def page_messaggi_nut():
     msgs = db.get_messages(pid)
     for m in msgs:
         with st.chat_message("assistant" if m["ruolo"]=="Nutrizionista" else "user"):
-            st.caption(m["timestamp"][:16]); st.write(f"**{m['ruolo']}**: {m['testo']}")
+            st.caption(_dt_slice(m.get("timestamp"), 0, 16)); st.write(f"**{m['ruolo']}**: {m['testo']}")
     st.divider()
     testo = st.text_input("Scrivi al paziente:")
     if st.button("Invia", type="primary"):
@@ -2414,7 +2421,7 @@ def portale_paziente():
         db.mark_read(pid, "Paziente")
         for m in db.get_messages(pid):
             with st.chat_message("user" if m["ruolo"]=="Paziente" else "assistant"):
-                st.caption(m["timestamp"][:16]); st.write(f"**{m['ruolo']}**: {m['testo']}")
+                st.caption(_dt_slice(m.get("timestamp"), 0, 16)); st.write(f"**{m['ruolo']}**: {m['testo']}")
         st.divider()
         testo = st.text_input("Scrivi al nutrizionista:")
         if st.button("Invia", type="primary"):
