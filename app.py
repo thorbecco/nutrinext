@@ -2788,7 +2788,7 @@ def page_admin_nutrizionisti():
 
 def page_admin_pazienti():
     st.title("👥 Cerca Pazienti")
-    query = st.text_input("🔍 Cerca per nome, cognome o username", placeholder="es. Carlotta Lodolo")
+    query = st.text_input("🔍 Cerca per nome, cognome o username", placeholder="es. Mario Rossi")
     if not query:
         st.info("Inserisci almeno un termine per cercare.")
         return
