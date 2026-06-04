@@ -1419,6 +1419,70 @@ def page_login():
                 st.error("Credenziali non valide.")
         st.markdown("<br>", unsafe_allow_html=True)
         _widget_recupero_credenziali()
+        st.divider()
+        st.markdown("<div style='text-align:center;color:#888;font-size:0.9em'>Sei un nutrizionista?</div>",
+                    unsafe_allow_html=True)
+        if st.button("📋 Registrati come Nutrizionista", use_container_width=True):
+            st.session_state["show_register_nut"] = True
+            st.rerun()
+
+
+def page_registrazione_nutrizionista():
+    """Pagina pubblica di registrazione per nutrizionisti."""
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        st.image(_img("logos/logo_login.png"), use_container_width=True)
+    st.markdown("""
+    <div style='text-align:center;padding:6px 0 16px'>
+      <p style='color:#666;font-size:1.1em'>Registrazione Nutrizionista</p>
+      <p style='color:#999;font-size:0.9em'>La tua richiesta verrà esaminata dall'amministratore NutriNext</p>
+    </div>""", unsafe_allow_html=True)
+
+    with st.form("form_reg_nut"):
+        f1, f2 = st.columns(2)
+        nome    = f1.text_input("Nome *")
+        cognome = f2.text_input("Cognome")
+
+        f3, f4 = st.columns(2)
+        sesso_nut = f3.selectbox("Sesso", ["M", "F"])
+        spec      = f4.text_input("Specializzazione", value="Nutrizionista")
+
+        f5, f6 = st.columns(2)
+        email_s = f5.text_input("Email studio *")
+        tel     = f6.text_input("Telefono")
+
+        st.subheader("Credenziali di accesso")
+        u1, u2, u3 = st.columns(3)
+        username = u1.text_input("Username *")
+        pw1      = u2.text_input("Password *", type="password")
+        pw2      = u3.text_input("Conferma password *", type="password")
+
+        submitted = st.form_submit_button("📨 Invia richiesta", type="primary", use_container_width=True)
+
+    if submitted:
+        if not all([nome, email_s, username, pw1]):
+            st.error("Compila tutti i campi obbligatori (*).")
+        elif " " in username:
+            st.error("Lo username non può contenere spazi.")
+        elif pw1 != pw2:
+            st.error("Le password non coincidono.")
+        elif len(pw1) < 6:
+            st.error("La password deve essere di almeno 6 caratteri.")
+        else:
+            ok, msg = db.submit_nutritionist_request(
+                nome, cognome, sesso_nut, spec, email_s, tel, username, pw1)
+            if ok:
+                st.success(f"✅ {msg}")
+                st.balloons()
+                st.info("Puoi chiudere questa pagina. Ti contatteremo via email.")
+            else:
+                st.error(msg)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("← Torna al login"):
+        st.session_state["show_register_nut"] = False
+        st.rerun()
+
 
 # ==============================================================================
 # ───────────────────────── SIDEBAR NUTRIZIONISTA ──────────────────────────────
@@ -2693,11 +2757,15 @@ def sidebar_admin():
       <div style='font-size:0.8em;color:#9fa8da'>Admin — {user.get('nome','')} {user.get('cognome','')}</div>
     </div>""", unsafe_allow_html=True)
     st.sidebar.divider()
+    # Conta richieste in attesa per badge
+    pending_nut = len(db.get_pending_nutritionist_requests())
+    badge = f" 🔴" if pending_nut > 0 else ""
     nav = {
-        "admin_overview":     "📊  Overview piattaforma",
-        "admin_nutrizionisti":"👨‍⚕️  Nutrizionisti",
-        "admin_pazienti":     "👥  Cerca Pazienti",
-        "admin_bugs":         "🐛  Bug Report",
+        "admin_overview":       "📊  Overview piattaforma",
+        "admin_nutrizionisti":  "👨‍⚕️  Nutrizionisti",
+        "admin_richieste_nut":  f"📋  Richieste Nutrizionisti{badge}",
+        "admin_pazienti":       "👥  Cerca Pazienti",
+        "admin_bugs":           "🐛  Bug Report",
     }
     for key, label in nav.items():
         active = st.session_state.page == key
@@ -2833,6 +2901,61 @@ def page_admin_pazienti():
                     st.session_state.pop(f"confirm_del_paz_{p['id']}", None); st.rerun()
 
 
+def page_admin_richieste_nut():
+    st.title("📋 Richieste Registrazione Nutrizionisti")
+
+    tab_attesa, tab_storico = st.tabs(["⏳ In attesa", "📁 Storico"])
+
+    with tab_attesa:
+        requests = db.get_pending_nutritionist_requests()
+        if not requests:
+            st.success("✅ Nessuna richiesta in attesa.")
+        else:
+            st.caption(f"{len(requests)} richieste in attesa di approvazione")
+        for req in requests:
+            with st.container():
+                st.markdown(f"""
+                <div style='border:1px solid #e0e0e0;border-radius:10px;padding:16px;margin-bottom:12px;background:#fff'>
+                  <b style='font-size:1.1em'>{req.get('cognome','')} {req.get('nome','')}</b>
+                  &nbsp;·&nbsp; {req.get('specializzazione','—')}
+                  &nbsp;·&nbsp; <span style='color:#666'>@{req.get('username','')}</span><br>
+                  <span style='color:#888;font-size:0.9em'>
+                    📧 {req.get('email_studio','—')} &nbsp;·&nbsp;
+                    📞 {req.get('telefono','—')} &nbsp;·&nbsp;
+                    📅 {str(req.get('created_at',''))[:10]}
+                  </span>
+                </div>""", unsafe_allow_html=True)
+
+                c1, c2, c3 = st.columns([2, 1, 1])
+                motivo = c1.text_input("Motivo rifiuto (opzionale)", key=f"note_nut_{req['id']}")
+                if c2.button("✅ Approva", key=f"appr_nut_{req['id']}", type="primary", use_container_width=True):
+                    db.approve_nutritionist_request(req["id"])
+                    st.success(f"✅ {req.get('nome','')} approvato! Account creato.")
+                    st.rerun()
+                if c3.button("❌ Rifiuta", key=f"rif_nut_{req['id']}", use_container_width=True):
+                    db.reject_nutritionist_request(req["id"], motivo)
+                    st.warning("Richiesta rifiutata.")
+                    st.rerun()
+
+    with tab_storico:
+        all_req = db.get_all_nutritionist_requests()
+        processed = [r for r in all_req if r.get("stato") != "In attesa"]
+        if not processed:
+            st.info("Nessuna richiesta elaborata.")
+        for req in processed:
+            stato = req.get("stato","")
+            col = "#4caf50" if stato == "Approvato" else "#f44336"
+            st.markdown(f"""
+            <div style='border-left:4px solid {col};padding:8px 14px;
+                background:#fff;border-radius:6px;margin-bottom:8px'>
+              <b>{req.get('cognome','')} {req.get('nome','')}</b>
+              · @{req.get('username','')}
+              · <span style='color:{col}'>{stato}</span>
+              <span style='color:#888;font-size:0.85em'> · {str(req.get('created_at',''))[:10]}</span>
+              {f"<br><i style='color:#888;font-size:0.85em'>Nota: {req.get('admin_note','')}</i>" if req.get('admin_note') else ''}
+            </div>""", unsafe_allow_html=True)
+
+
 def page_admin_bugs():
     st.title("🐛 Bug Report")
 
@@ -2885,10 +3008,14 @@ def page_admin_bugs():
 params = st.query_params
 _has_token     = "token" in params or "studio" in params
 _show_register = st.session_state.get("show_register", False) or _has_token
+_show_reg_nut  = st.session_state.get("show_register_nut", False)
 
 # Primo avvio: nessun nutrizionista E nessun superadmin
 if not db.has_nutritionist() and not db.has_superadmin():
     page_setup()
+
+elif _show_reg_nut:
+    page_registrazione_nutrizionista()
 
 elif _show_register or "token" in params or "studio" in params:
     if not st.session_state.get("reg_nut_code"):
@@ -2898,7 +3025,7 @@ elif _show_register or "token" in params or "studio" in params:
 elif st.session_state.user is None:
     page_login()
     st.divider()
-    if st.button("Non hai un account? **Registrati**", use_container_width=True):
+    if st.button("Non hai un account? **Registrati come Paziente**", use_container_width=True):
         st.session_state["show_register"] = True
         st.rerun()
 
@@ -2911,6 +3038,8 @@ elif st.session_state.user.get("role") == "superadmin":
         page = st.session_state.get("page", "admin_overview")
         if page == "admin_nutrizionisti":
             page_admin_nutrizionisti()
+        elif page == "admin_richieste_nut":
+            page_admin_richieste_nut()
         elif page == "admin_pazienti":
             page_admin_pazienti()
         elif page == "admin_bugs":

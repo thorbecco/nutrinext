@@ -251,6 +251,20 @@ def _pg_init(cur):
             created_at       TIMESTAMPTZ DEFAULT NOW(),
             resolved_at      TIMESTAMPTZ
         )""",
+        """CREATE TABLE IF NOT EXISTS nutritionist_requests (
+            id               SERIAL PRIMARY KEY,
+            nome             TEXT NOT NULL,
+            cognome          TEXT DEFAULT '',
+            sesso_nut        TEXT DEFAULT 'M',
+            specializzazione TEXT DEFAULT 'Nutrizionista',
+            email_studio     TEXT DEFAULT '',
+            telefono         TEXT DEFAULT '',
+            username         TEXT NOT NULL,
+            password_hash    TEXT NOT NULL,
+            stato            TEXT DEFAULT 'In attesa',
+            admin_note       TEXT DEFAULT '',
+            created_at       TIMESTAMPTZ DEFAULT NOW()
+        )""",
     ]
     for stmt in stmts:
         cur.execute(stmt)
@@ -383,6 +397,20 @@ def _sqlite_init(cur):
         admin_note       TEXT DEFAULT '',
         created_at       TEXT DEFAULT (datetime('now')),
         resolved_at      TEXT
+    );
+    CREATE TABLE IF NOT EXISTS nutritionist_requests (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome             TEXT NOT NULL,
+        cognome          TEXT DEFAULT '',
+        sesso_nut        TEXT DEFAULT 'M',
+        specializzazione TEXT DEFAULT 'Nutrizionista',
+        email_studio     TEXT DEFAULT '',
+        telefono         TEXT DEFAULT '',
+        username         TEXT NOT NULL,
+        password_hash    TEXT NOT NULL,
+        stato            TEXT DEFAULT 'In attesa',
+        admin_note       TEXT DEFAULT '',
+        created_at       TEXT DEFAULT (datetime('now'))
     );
     """)
     # Migration colonne mancanti
@@ -930,6 +958,63 @@ def reset_password(user_type: str, user_id: int, new_password: str):
             cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (ph, user_id))
         else:
             cur.execute("UPDATE patients SET password_hash=%s WHERE id=%s", (ph, user_id))
+
+
+# ==============================================================================
+# RICHIESTE REGISTRAZIONE NUTRIZIONISTA
+# ==============================================================================
+
+def submit_nutritionist_request(nome, cognome, sesso_nut, specializzazione,
+                                 email_studio, telefono, username, password) -> tuple:
+    with _conn() as cur:
+        cur.execute("SELECT 1 FROM users WHERE username=%s", (username,))
+        if cur.fetchone():
+            return False, "Username già in uso da un altro account."
+        cur.execute("SELECT 1 FROM nutritionist_requests WHERE username=%s AND stato='In attesa'", (username,))
+        if cur.fetchone():
+            return False, "Hai già una richiesta in attesa con questo username."
+        cur.execute("""INSERT INTO nutritionist_requests
+            (nome,cognome,sesso_nut,specializzazione,email_studio,telefono,username,password_hash)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (nome, cognome, sesso_nut, specializzazione, email_studio,
+             telefono, username, _hash(password)))
+        return True, "Richiesta inviata. Riceverai conferma non appena l'amministratore la approverà."
+
+def get_pending_nutritionist_requests() -> list:
+    with _conn() as cur:
+        cur.execute("""SELECT * FROM nutritionist_requests WHERE stato='In attesa'
+            ORDER BY created_at DESC""")
+        return _fetchall(cur)
+
+def approve_nutritionist_request(request_id: int):
+    with _conn() as cur:
+        cur.execute("SELECT * FROM nutritionist_requests WHERE id=%s", (request_id,))
+        req = _fetchone(cur)
+        if not req:
+            return
+    code = _gen_studio_code()
+    ret  = " RETURNING id" if USE_POSTGRES else ""
+    with _conn() as cur:
+        cur.execute(
+            f"""INSERT INTO users
+               (username,password_hash,nome,cognome,role,studio_code,
+                sesso_nut,specializzazione,email_studio,telefono)
+               VALUES (%s,%s,%s,%s,'nutritionist',%s,%s,%s,%s,%s){ret}""",
+            (req["username"], req["password_hash"], req["nome"], req["cognome"],
+             code, req["sesso_nut"], req["specializzazione"],
+             req["email_studio"], req["telefono"])
+        )
+        cur.execute("UPDATE nutritionist_requests SET stato='Approvato' WHERE id=%s", (request_id,))
+
+def reject_nutritionist_request(request_id: int, admin_note: str = ""):
+    with _conn() as cur:
+        cur.execute("UPDATE nutritionist_requests SET stato='Rifiutato', admin_note=%s WHERE id=%s",
+                    (admin_note, request_id))
+
+def get_all_nutritionist_requests() -> list:
+    with _conn() as cur:
+        cur.execute("SELECT * FROM nutritionist_requests ORDER BY created_at DESC")
+        return _fetchall(cur)
 
 
 # ==============================================================================
