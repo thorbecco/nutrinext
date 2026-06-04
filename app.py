@@ -2612,12 +2612,17 @@ def page_inviti():
     user = st.session_state.user
     st.title("🔗 Invita Pazienti")
 
-    # Determina URL base
-    base_url = st.text_input(
-        "URL base dell'app (modifica se l'app è su un server)",
-        value="http://localhost:8501",
-        help="Se l'app è deployata cambia con l'URL pubblico."
-    )
+    # URL base: prende APP_URL da env (Railway), fallback all'header HTTP
+    base_url = os.environ.get("APP_URL", "").rstrip("/")
+    if not base_url:
+        # Ricava l'URL dall'header della richiesta corrente
+        try:
+            headers = st.context.headers
+            host = headers.get("host", "localhost:8501")
+            proto = "https" if "railway.app" in host or "up.railway" in host else "http"
+            base_url = f"{proto}://{host}"
+        except Exception:
+            base_url = "http://localhost:8501"
 
     st.divider()
 
