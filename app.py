@@ -358,9 +358,14 @@ class _NutriPDF(FPDF):
         if self.page_no() == self._skip_footer_page:
             return
         self.set_y(-14)
-        # Logo NutriNext piccolo a sinistra
-        logo_footer = _img("logos/default_logo.png")
-        if os.path.exists(logo_footer):
+        # Logo NutriNext piccolo a sinistra — usa JPEG per compatibilità fpdf
+        tmp_dir = "/tmp/nutrigen_logos"
+        logo_jpg = os.path.join(tmp_dir, "default_logo.jpg")
+        logo_png = _img("logos/default_logo.png")
+        if not os.path.exists(logo_jpg) and os.path.exists(logo_png):
+            _logo_to_jpeg(logo_png, logo_jpg)
+        logo_footer = logo_jpg if os.path.exists(logo_jpg) else (logo_png if os.path.exists(logo_png) else "")
+        if logo_footer:
             try:
                 self.image(logo_footer, x=20, y=self.get_y()-1, h=8)
             except Exception:
@@ -1233,21 +1238,42 @@ def _salva_logo(logo_file, user_id: int) -> str:
     db.save_logo_data(user_id, base64.b64encode(data).decode())
     return path
 
+def _logo_to_jpeg(src_path: str, dest_path: str) -> bool:
+    """Converte qualsiasi immagine in JPEG RGB per fpdf — ritorna True se riuscito."""
+    try:
+        from PIL import Image as _PilImg
+        img = _PilImg.open(src_path).convert("RGB")
+        img.save(dest_path, "JPEG", quality=92)
+        return True
+    except Exception:
+        return False
+
 def _get_logo_path(user: dict) -> str:
-    """Restituisce il path del logo, ricostruendolo dal DB se il file non esiste.
+    """Restituisce il path JPEG del logo (per fpdf), ricostruendolo dal DB se necessario.
     Usa /tmp per compatibilità con filesystem read-only (Railway)."""
+    tmp_dir = "/tmp/nutrigen_logos"
+    os.makedirs(tmp_dir, exist_ok=True)
+
     logo_b64 = user.get("logo_data") or db.get_logo_data(user.get("id", 0))
     if logo_b64:
-        tmp_dir = "/tmp/nutrigen_logos"
-        os.makedirs(tmp_dir, exist_ok=True)
-        p = os.path.join(tmp_dir, f"logo_{user.get('id',0)}.png")
-        with open(p, "wb") as f:
+        # Salva PNG originale e converti in JPEG
+        png_path = os.path.join(tmp_dir, f"logo_{user.get('id',0)}.png")
+        jpg_path = os.path.join(tmp_dir, f"logo_{user.get('id',0)}.jpg")
+        with open(png_path, "wb") as f:
             f.write(base64.b64decode(logo_b64))
-        return p
-    # Fallback: logo_path salvato nel profilo
-    path = user.get("logo_path", "")
-    if path and os.path.exists(path):
-        return path
+        if _logo_to_jpeg(png_path, jpg_path):
+            return jpg_path
+        return png_path  # fallback PNG originale
+
+    # Nessun logo personale → usa default NutriNext
+    default_png = _img("logos/default_logo.png")
+    default_jpg = os.path.join(tmp_dir, "default_logo.jpg")
+    if not os.path.exists(default_jpg) and os.path.exists(default_png):
+        _logo_to_jpeg(default_png, default_jpg)
+    if os.path.exists(default_jpg):
+        return default_jpg
+    if os.path.exists(default_png):
+        return default_png
     return ""
 
 def page_setup():
@@ -1996,9 +2022,9 @@ def page_piano():
         st.divider()
         st.subheader("📝 Spiegazioni e Consigli")
         st.caption("Questo testo apparirà nella seconda pagina del PDF, prima del piano alimentare.")
-        st.session_state.note_piano = st.text_area(
+        st.text_area(
             "Consigli comportamentali, spiegazioni, integrazioni, avvertenze:",
-            value=st.session_state.note_piano, height=200,
+            key="note_piano", height=200,
             placeholder="Es. Gli alimenti devono essere pesati a crudo...\nBere 2L di acqua al giorno..."
         )
 
@@ -2008,10 +2034,10 @@ def page_piano():
             st.subheader("🥩 Frequenza Consumo Fonti Proteiche")
             st.caption("Comparirà nel PDF subito dopo Spiegazioni e Consigli.")
             if "freq_proteiche" not in st.session_state:
-                st.session_state.freq_proteiche = ""
-            st.session_state.freq_proteiche = st.text_area(
+                st.session_state["freq_proteiche"] = ""
+            st.text_area(
                 "Indica la frequenza delle fonti proteiche (carne, pesce, uova, legumi…):",
-                value=st.session_state.freq_proteiche, height=150,
+                key="freq_proteiche", height=150,
                 placeholder="Es. Carne rossa: max 2 volte a settimana\nPesce: 3-4 volte a settimana\nUova: 3-4 a settimana..."
             )
 
