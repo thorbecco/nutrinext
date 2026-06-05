@@ -125,7 +125,7 @@ _ensure_pwa_icons()
 for k, v in {
     "user": None, "patient_obj": None, "page": "dashboard",
     "sel_patient_id": None, "piano_corrente": [], "note_piano": "",
-    "edit_appt_id": None,
+    "edit_appt_id": None, "componenti_composto": [],
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -655,12 +655,20 @@ def genera_pdf_spesa(items, paziente: dict = None, nutrizionista: dict = None, v
     nome_paz   = _safe(f"{paz.get('cognome','')} {paz.get('nome','')}".strip() or "Paziente")
     titolo_nut = _safe(_titolo_nutrizionista(nut))
 
-    # Aggrega quantità per alimento
+    # Aggrega quantità per alimento, spacchettando le voci composite
     agg = {}
     for r in items:
         al = str(r.get("Alimento", r.get("alimento", ""))).strip()
         q  = float(r.get("Quantità", r.get("quantita", 0)) or 0)
-        if al:
+        componenti = r.get("_componenti") or []
+        if componenti:
+            # Voce composta: usa i componenti salvati
+            for c in componenti:
+                nome_c = c.get("nome", "").strip()
+                qty_c  = float(c.get("quantita", 0) or 0)
+                if nome_c:
+                    agg[nome_c] = agg.get(nome_c, 0) + qty_c
+        elif al:
             agg[al] = agg.get(al, 0) + q
 
     pdf = FPDF()
@@ -1897,10 +1905,19 @@ def page_piano():
     # Carica piano attivo in session_state se non già presente
     plan = db.get_active_plan(pid)
     if plan and not st.session_state.piano_corrente:
+        import json as _json
+        def _load_item(i):
+            item = {"Giorno":i["giorno"],"Pasto":i["pasto"],
+                    "Alimento":i["alimento"],"Quantità":i["quantita"]}
+            raw = i.get("componenti_json")
+            if raw:
+                try:
+                    item["_componenti"] = _json.loads(raw)
+                except Exception:
+                    pass
+            return item
         st.session_state.piano_corrente = [
-            {"Giorno":i["giorno"],"Pasto":i["pasto"],
-             "Alimento":i["alimento"],"Quantità":i["quantita"]}
-            for i in db.get_plan_items(plan["id"])
+            _load_item(i) for i in db.get_plan_items(plan["id"])
         ]
         st.session_state.note_piano = plan.get("note","")
 
@@ -2000,6 +2017,89 @@ def page_piano():
                     st.session_state.piano_corrente.append(
                         {"Giorno":g,"Pasto":pasto_sel,"Alimento":alim_sel,"Quantità":peso_sel})
                 st.rerun()
+
+        # ── ALIMENTO COMPOSTO ────────────────────────────────────────────────────
+        with st.expander("🍽️ Inserisci alimento composto"):
+            st.caption("Costruisci una voce strutturata: ogni ingrediente viene salvato separatamente per la lista della spesa, ma appare come testo unico nel piano dieta.")
+
+            nome_prep = st.text_input(
+                "Nome preparazione (opzionale):",
+                placeholder="es. Colazione tipo A, Caffè + toast, Fette biscottate con marmellata...",
+                key="_comp_nome_prep",
+            )
+
+            st.markdown("##### Aggiungi ingrediente")
+            ri1, ri2, ri3, ri4 = st.columns([3, 1, 0.7, 2])
+            nome_ing_input = ri1.text_input(
+                "Ingrediente:", placeholder="es. yogurt magro bianco, caffè, pane integrale...",
+                key="_comp_nome_libero", label_visibility="collapsed",
+            )
+            is_qb_comp = ri3.checkbox("Q.B.", key="_comp_qb")
+            peso_comp  = 0 if is_qb_comp else ri2.number_input("g:", 0, step=5, key="_comp_peso", label_visibility="collapsed")
+            nota_comp  = ri4.text_input(
+                "Nota / varianti:", placeholder="es. es. Vipiteno, tacchino o bresaola...",
+                key="_comp_nota", label_visibility="collapsed",
+            )
+
+            if st.button("➕ Aggiungi ingrediente", key="_btn_add_comp"):
+                nome_ing = st.session_state.get("_comp_nome_libero", "").strip()
+                if nome_ing:
+                    st.session_state.componenti_composto.append({
+                        "nome": nome_ing,
+                        "quantita": peso_comp,
+                        "nota": nota_comp.strip(),
+                    })
+                    st.rerun()
+                else:
+                    st.warning("Inserisci il nome dell'ingrediente.")
+
+            # ── Lista ingredienti + anteprima ──
+            if st.session_state.componenti_composto:
+                st.divider()
+                st.markdown("**Ingredienti:**")
+                for idx, comp in enumerate(st.session_state.componenti_composto):
+                    qstr = "q.b." if comp["quantita"] == 0 else f"{int(comp['quantita'])}g"
+                    nota_str = f" (es. {comp['nota']})" if comp["nota"] else ""
+                    lc1, lc2 = st.columns([5, 1])
+                    lc1.markdown(f"**{idx+1}.** {qstr} {comp['nome']}{nota_str}")
+                    if lc2.button("🗑️", key=f"_del_comp_{idx}", help="Rimuovi"):
+                        st.session_state.componenti_composto.pop(idx)
+                        st.rerun()
+
+                parti = []
+                for c in st.session_state.componenti_composto:
+                    qstr = "q.b." if c["quantita"] == 0 else f"{int(c['quantita'])}g"
+                    nota_str = f" (es. {c['nota']})" if c["nota"] else ""
+                    parti.append(f"{qstr} {c['nome']}{nota_str}")
+                corpo = " + ".join(parti)
+                testo_finale = f"{nome_prep.strip()}: {corpo}" if nome_prep.strip() else corpo
+
+                st.markdown("**Anteprima voce nel piano:**")
+                st.info(f"📋 {testo_finale}")
+
+                st.divider()
+                gc1, gc2 = st.columns([1, 1])
+                pasto_comp  = gc1.selectbox("Pasto:", ["Colazione","Spuntino Mattina","Pranzo","Merenda","Cena","Pre-Nanna"], key="_comp_pasto")
+                giorni_comp = gc2.multiselect("Giorni:", lista_giorni, key="_comp_giorni")
+
+                bc1, bc2 = st.columns([2, 1])
+                if bc1.button("🚀 INSERISCI NEL PIANO", type="primary", key="_btn_insert_comp"):
+                    if not giorni_comp:
+                        st.warning("Seleziona almeno un giorno.")
+                    else:
+                        for g in giorni_comp:
+                            st.session_state.piano_corrente.append({
+                                "Giorno": g, "Pasto": pasto_comp,
+                                "Alimento": testo_finale, "Quantità": 0,
+                                "_componenti": list(st.session_state.componenti_composto),
+                            })
+                        st.session_state.componenti_composto = []
+                        st.rerun()
+                if bc2.button("🗑️ Svuota", key="_btn_clear_comp"):
+                    st.session_state.componenti_composto = []
+                    st.rerun()
+            else:
+                st.info("Nessun ingrediente aggiunto. Compila il nome e aggiungi gli ingredienti.")
 
         st.divider()
         st.subheader("📋 Tabella piano")

@@ -222,7 +222,8 @@ def _pg_init(cur):
         """CREATE TABLE IF NOT EXISTS diet_items (
             id       SERIAL PRIMARY KEY,
             plan_id  INTEGER NOT NULL REFERENCES diet_plans(id) ON DELETE CASCADE,
-            giorno TEXT, pasto TEXT, alimento TEXT, quantita REAL DEFAULT 0
+            giorno TEXT, pasto TEXT, alimento TEXT, quantita REAL DEFAULT 0,
+            componenti_json TEXT DEFAULT NULL
         )""",
         """CREATE TABLE IF NOT EXISTS messages (
             id         SERIAL PRIMARY KEY,
@@ -427,6 +428,7 @@ def _sqlite_init(cur):
         ("users", "last_login",       "TEXT"),
         ("users",       "is_active",        "INTEGER DEFAULT 1"),
         ("diet_plans",  "freq_proteiche",   "TEXT DEFAULT ''"),
+        ("diet_items",  "componenti_json",  "TEXT DEFAULT NULL"),
     ]
     for table, col, typedef in _migrations:
         try:
@@ -440,6 +442,7 @@ def _pg_migrate(cur):
     migrations = [
         ("users",       "is_active",       "INTEGER DEFAULT 1"),
         ("diet_plans",  "freq_proteiche",  "TEXT DEFAULT ''"),
+        ("diet_items",  "componenti_json", "TEXT DEFAULT NULL"),
         ("nutritionist_requests", "id",    None),  # solo check esistenza tabella
     ]
     for table, col, typedef in migrations:
@@ -728,10 +731,13 @@ def save_plan(patient_id, items: list, note="", nome="Piano attivo",
             (patient_id, visit_id, nome, note, freq_proteiche))
         plan_id = cur.lastrowid
         for item in items:
+            import json as _json
+            comp = item.get("_componenti")
+            comp_json = _json.dumps(comp, ensure_ascii=False) if comp else None
             cur.execute(
-                "INSERT INTO diet_items (plan_id,giorno,pasto,alimento,quantita) VALUES (%s,%s,%s,%s,%s)",
+                "INSERT INTO diet_items (plan_id,giorno,pasto,alimento,quantita,componenti_json) VALUES (%s,%s,%s,%s,%s,%s)",
                 (plan_id, item.get("Giorno"), item.get("Pasto"),
-                 item.get("Alimento"), item.get("Quantità", 0)))
+                 item.get("Alimento"), item.get("Quantità", 0), comp_json))
         return plan_id
 
 
