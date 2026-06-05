@@ -438,7 +438,10 @@ def _sqlite_init(cur):
 
 
 def _pg_migrate(cur):
-    """Applica colonne mancanti su PostgreSQL (idempotente)."""
+    """Applica colonne mancanti su PostgreSQL (idempotente).
+    Usa SAVEPOINT per isolare ogni ALTER TABLE: se la colonna esiste già
+    l'eccezione non abbandona l'intera transazione.
+    """
     migrations = [
         ("users",       "is_active",       "INTEGER DEFAULT 1"),
         ("diet_plans",  "freq_proteiche",  "TEXT DEFAULT ''"),
@@ -449,9 +452,11 @@ def _pg_migrate(cur):
         if typedef is None:
             continue
         try:
-            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+            cur._cur.execute("SAVEPOINT _mig")
+            cur._cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+            cur._cur.execute("RELEASE SAVEPOINT _mig")
         except Exception:
-            pass  # colonna già esistente
+            cur._cur.execute("ROLLBACK TO SAVEPOINT _mig")
 
 
 def init_db():
