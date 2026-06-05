@@ -159,6 +159,45 @@ def load_database():
 DATABASE = load_database()
 
 # ==============================================================================
+# CACHED DB WRAPPERS  (evitano query ripetute ad ogni rerun)
+# ==============================================================================
+@st.cache_data(ttl=20)
+def _cached_unread(patient_id: int, ruolo: str) -> int:
+    return db.unread_count(patient_id, ruolo)
+
+@st.cache_data(ttl=30)
+def _cached_appointments(nut_id: int):
+    return db.get_appointments(nut_id)
+
+@st.cache_data(ttl=60)
+def _cached_patients(nut_id: int):
+    return db.get_patients(nut_id)
+
+@st.cache_data(ttl=60)
+def _cached_active_plan(patient_id: int):
+    return db.get_active_plan(patient_id)
+
+@st.cache_data(ttl=60)
+def _cached_plan_items(plan_id: int):
+    return db.get_plan_items(plan_id)
+
+@st.cache_data(ttl=60)
+def _cached_latest_visit(patient_id: int):
+    return db.get_latest_visit(patient_id)
+
+def _invalidate_patient_cache(patient_id: int):
+    """Chiama dopo ogni scrittura che riguarda un paziente."""
+    _cached_unread.clear()
+    _cached_active_plan.clear()
+    _cached_plan_items.clear()
+    _cached_latest_visit.clear()
+
+def _invalidate_nut_cache(nut_id: int):
+    """Chiama dopo ogni scrittura che riguarda il nutrizionista."""
+    _cached_appointments.clear()
+    _cached_patients.clear()
+
+# ==============================================================================
 # BIA & BMR
 # ==============================================================================
 def calcola_bia(peso, altezza, eta, sesso, R, Xc):
@@ -1563,7 +1602,7 @@ def sidebar_nutrizionista():
         for key, label in sub.items():
             badge = ""
             if key == "messaggi":
-                n = db.unread_count(st.session_state.sel_patient_id, "Nutrizionista")
+                n = _cached_unread(st.session_state.sel_patient_id, "Nutrizionista")
                 if n: badge = f" 🔴{n}"
             if st.sidebar.button(label+badge, use_container_width=True,
                                 type="primary" if st.session_state.page==key else "secondary"):
@@ -1584,11 +1623,10 @@ def page_dashboard():
     st.title(f"Buongiorno, Dr. {user['nome']} 👋")
 
     oggi = date.today()
-    appts_oggi = [a for a in db.get_appointments(user["id"])
-                  if str(a.get("data_ora","")).startswith(str(oggi))]
-    pazienti    = db.get_patients(user["id"])
-    appts_futuri = [a for a in db.get_appointments(user["id"])
-                    if str(a.get("data_ora","")) > str(oggi) and a.get("stato")=="Programmato"]
+    _all_appts   = _cached_appointments(user["id"])
+    appts_oggi   = [a for a in _all_appts if str(a.get("data_ora","")).startswith(str(oggi))]
+    appts_futuri = [a for a in _all_appts if str(a.get("data_ora","")) > str(oggi) and a.get("stato")=="Programmato"]
+    pazienti     = _cached_patients(user["id"])
 
     c1,c2,c3 = st.columns(3)
     c1.markdown(f"""<div class='metric-card'>
@@ -1697,7 +1735,7 @@ def page_agenda():
     paz_nomi = ["(Paziente esterno / nuovo)"] + list(paz_map.keys())
 
     edit_id = st.session_state.get("edit_appt_id")
-    appt_edit = next((a for a in db.get_appointments(user["id"]) if a["id"]==edit_id), {}) if edit_id else {}
+    appt_edit = next((a for a in _cached_appointments(user["id"]) if a["id"]==edit_id), {}) if edit_id else {}
 
     with st.expander("➕ Aggiungi / Modifica appuntamento", expanded=bool(appt_edit)):
         f1, f2 = st.columns(2)
@@ -1730,10 +1768,12 @@ def page_agenda():
             data_ora_str = f"{data_appt} {ora_appt.strftime('%H:%M')}"
             db.save_appointment(user["id"], patient_id, patient_name,
                 data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id)
+            _invalidate_nut_cache(user["id"])
             st.session_state.edit_appt_id = None
             st.success("Salvato."); st.rerun()
         if edit_id and bb.button("🗑️ Elimina", type="secondary", use_container_width=True):
             db.delete_appointment(edit_id)
+            _invalidate_nut_cache(user["id"])
             st.session_state.edit_appt_id = None
             st.rerun()
 
@@ -1751,7 +1791,7 @@ def page_agenda():
         if c2.button("✏️", key=f"edit_{a['id']}"):
             st.session_state.edit_appt_id = a["id"]; st.rerun()
         if c3.button("🗑️", key=f"del_{a['id']}"):
-            db.delete_appointment(a["id"]); st.rerun()
+            db.delete_appointment(a["id"]); _invalidate_nut_cache(user["id"]); st.rerun()
 
 # ==============================================================================
 # ─────────────────────────── LISTA PAZIENTI ───────────────────────────────────
@@ -1763,7 +1803,7 @@ def page_pazienti():
     tab_lista, tab_nuovo = st.tabs(["📋 Lista pazienti", "➕ Nuovo paziente"])
 
     with tab_lista:
-        pazienti = db.get_patients(user["id"])
+        pazienti = _cached_patients(user["id"])
         search   = st.text_input("🔍 Cerca per nome, cognome o email", placeholder="Digita per filtrare...")
         if search:
             q = search.lower()
@@ -1813,6 +1853,7 @@ def _form_paziente(nutritionist_id, patient_id=None):
         else:
             db.save_patient(nutritionist_id, nome, cognome, email, sesso,
                 str(data_n), tel, note_a, uname, pw, patient_id)
+            _invalidate_nut_cache(nutritionist_id)
             st.success("Paziente salvato.")
             st.rerun()
 
@@ -1879,6 +1920,7 @@ def page_visita():
         if st.button("💾 SALVA VISITA", type="primary", use_container_width=True):
             db.save_visit(pid, str(data_v), peso, altezza, eta_paz, sesso_p,
                           R_v, Xc_v, bia, bmr, pliche, note_v)
+            _invalidate_patient_cache(pid)
             st.success("Visita salvata.")
             st.rerun()
 
@@ -2112,16 +2154,18 @@ def page_piano():
             for r in st.session_state.piano_corrente
         ])
         if not df_edit.empty:
-            if col_sort == "Giorno":
-                order = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica","Workout Day","Rest Day"]
-                df_edit["_o"] = df_edit["Giorno"].apply(lambda x: order.index(x) if x in order else 99)
-                sort_idx = df_edit.sort_values("_o").drop(columns="_o").index.tolist()
-                df_edit = df_edit.loc[sort_idx].drop(columns="_o")
+            try:
+                if col_sort == "Giorno":
+                    order = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica","Workout Day","Rest Day"]
+                    df_edit["_o"] = df_edit["Giorno"].apply(lambda x: order.index(x) if x in order else 99)
+                    sort_idx = df_edit.sort_values("_o").index.tolist()
+                    df_edit = df_edit.loc[sort_idx].drop(columns="_o").reset_index(drop=True)
+                else:
+                    sort_idx = df_edit.sort_values(col_sort).index.tolist()
+                    df_edit = df_edit.loc[sort_idx].reset_index(drop=True)
                 _comp_backup = [_comp_backup[i] for i in sort_idx]
-            else:
-                sort_idx = df_edit.sort_values(col_sort).index.tolist()
-                df_edit = df_edit.loc[sort_idx]
-                _comp_backup = [_comp_backup[i] for i in sort_idx]
+            except Exception:
+                df_edit = df_edit.reset_index(drop=True)
 
         edited = st.data_editor(
             df_edit, num_rows="dynamic", use_container_width=True,
@@ -2192,6 +2236,7 @@ def page_piano():
                 db.save_plan(pid, st.session_state.piano_corrente,
                              st.session_state.note_piano, nome_piano,
                              freq_proteiche=st.session_state.get("freq_proteiche",""))
+                _invalidate_patient_cache(pid)
                 st.success("Piano salvato e reso visibile al paziente.")
 
     with tab_pdf:
@@ -2320,7 +2365,7 @@ def page_messaggi_nut():
     testo = st.text_input("Scrivi al paziente:")
     if st.button("Invia", type="primary"):
         if testo:
-            db.send_message(pid, "Nutrizionista", testo); st.rerun()
+            db.send_message(pid, "Nutrizionista", testo); _invalidate_patient_cache(pid); st.rerun()
 
 # ==============================================================================
 # ─────────────────────────── ARCHIVIO TEMPLATE ────────────────────────────────
@@ -2397,7 +2442,7 @@ def portale_paziente():
     for key, label in nav_p.items():
         badge = ""
         if key == "msg_p":
-            n = db.unread_count(pid, "Paziente")
+            n = _cached_unread(pid, "Paziente")
             if n: badge = f" 🔴{n}"
         if st.sidebar.button(label+badge, use_container_width=True,
                             type="primary" if st.session_state.page==key else "secondary"):
@@ -2407,9 +2452,10 @@ def portale_paziente():
         st.session_state.user = None; st.session_state.page = "home_p"; st.rerun()
 
     page = st.session_state.page
-    plan     = db.get_active_plan(pid)
-    items    = db.get_plan_items(plan["id"]) if plan else []
-    ultima_v = db.get_latest_visit(pid)
+    plan     = _cached_active_plan(pid)
+    # get_plan_items solo se serve davvero (piano e spesa)
+    items    = _cached_plan_items(plan["id"]) if plan and page in ("piano_p","spesa_p","home_p") else []
+    ultima_v = _cached_latest_visit(pid) if page in ("home_p","visita_p") else {}
 
     if page in ("home_p", None):
         st.title(f"👋 Ciao, {p_obj.get('nome','')}!")
@@ -2422,7 +2468,7 @@ def portale_paziente():
           <div style='color:#666;font-size:0.85em'>ULTIMA VISITA</div>
           <div style='font-size:1.3em;font-weight:700;color:#2e7d32'>{ultima_v.get('data','—')}</div>
         </div>""", unsafe_allow_html=True)
-        unread = db.unread_count(pid, "Paziente")
+        unread = _cached_unread(pid, "Paziente")
         c3.markdown(f"""<div class='metric-card' style='border-color:#ff9800'>
           <div style='color:#666;font-size:0.85em'>MESSAGGI NON LETTI</div>
           <div style='font-size:1.3em;font-weight:700;color:#e65100'>{unread}</div>
@@ -2647,7 +2693,7 @@ def portale_paziente():
         testo = st.text_input("Scrivi al nutrizionista:")
         if st.button("Invia", type="primary"):
             if testo:
-                db.send_message(pid, "Paziente", testo); st.rerun()
+                db.send_message(pid, "Paziente", testo); _invalidate_patient_cache(pid); st.rerun()
 
 # ==============================================================================
 # ==============================================================================
