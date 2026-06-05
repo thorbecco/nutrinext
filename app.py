@@ -380,7 +380,7 @@ class _NutriPDF(FPDF):
         self.set_font("Arial", "B", 7)
         self.set_text_color(_PDF_R, _PDF_G, _PDF_B)
         self.set_x(0)
-        self.cell(190, 5, "NutriNext Pro", align="R")
+        self.cell(190, 5, "NutriNext", align="R")
         self.set_text_color(0, 0, 0)
 
 
@@ -1839,7 +1839,7 @@ def page_visita():
         altezza = c5.number_input("Altezza (cm)", 100, 230, value=170)
 
         st.divider()
-        st.subheader("⚡ BIA — Akern")
+        st.subheader("⚡ BIA")
         b1, b2 = st.columns(2)
         R_v  = b1.number_input("Resistenza R (Ω)", 100.0, 1000.0, value=500.0, step=0.1, format="%.1f")
         Xc_v = b2.number_input("Reattanza Xc (Ω)", 10.0, 200.0,  value=60.0,  step=0.1, format="%.1f")
