@@ -2104,22 +2104,37 @@ def page_piano():
         st.divider()
         st.subheader("📋 Tabella piano")
         col_sort = st.selectbox("Ordina per:", ["Giorno","Pasto","Alimento"], index=0)
-        df_edit  = pd.DataFrame(st.session_state.piano_corrente)
+
+        # Separa _componenti (lista) dal DataFrame: data_editor non gestisce colonne con liste
+        _comp_backup = [r.get("_componenti") for r in st.session_state.piano_corrente]
+        df_edit = pd.DataFrame([
+            {k: v for k, v in r.items() if k != "_componenti"}
+            for r in st.session_state.piano_corrente
+        ])
         if not df_edit.empty:
             if col_sort == "Giorno":
                 order = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica","Workout Day","Rest Day"]
                 df_edit["_o"] = df_edit["Giorno"].apply(lambda x: order.index(x) if x in order else 99)
-                df_edit = df_edit.sort_values("_o").drop(columns="_o")
+                sort_idx = df_edit.sort_values("_o").drop(columns="_o").index.tolist()
+                df_edit = df_edit.loc[sort_idx].drop(columns="_o")
+                _comp_backup = [_comp_backup[i] for i in sort_idx]
             else:
-                df_edit = df_edit.sort_values(col_sort)
+                sort_idx = df_edit.sort_values(col_sort).index.tolist()
+                df_edit = df_edit.loc[sort_idx]
+                _comp_backup = [_comp_backup[i] for i in sort_idx]
 
-        st.session_state.piano_corrente = st.data_editor(
+        edited = st.data_editor(
             df_edit, num_rows="dynamic", use_container_width=True,
             column_config={
                 "Giorno": st.column_config.SelectboxColumn("Giorno", options=lista_giorni),
                 "Pasto":  st.column_config.SelectboxColumn("Pasto",  options=["Colazione","Spuntino Mattina","Pranzo","Merenda","Cena","Pre-Nanna"]),
             }
         ).to_dict("records")
+        # Ripristina _componenti sulle righe che ce l'hanno
+        for i, r in enumerate(edited):
+            if i < len(_comp_backup) and _comp_backup[i]:
+                r["_componenti"] = _comp_backup[i]
+        st.session_state.piano_corrente = edited
 
         # Svuota con conferma
         if not st.session_state.get("confirm_svuota"):
