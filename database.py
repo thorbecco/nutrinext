@@ -435,10 +435,27 @@ def _sqlite_init(cur):
             pass
 
 
+def _pg_migrate(cur):
+    """Applica colonne mancanti su PostgreSQL (idempotente)."""
+    migrations = [
+        ("users",       "is_active",       "INTEGER DEFAULT 1"),
+        ("diet_plans",  "freq_proteiche",  "TEXT DEFAULT ''"),
+        ("nutritionist_requests", "id",    None),  # solo check esistenza tabella
+    ]
+    for table, col, typedef in migrations:
+        if typedef is None:
+            continue
+        try:
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass  # colonna già esistente
+
+
 def init_db():
     with _conn() as cur:
         if USE_POSTGRES:
             _pg_init(cur)
+            _pg_migrate(cur)
         else:
             _sqlite_init(cur)
 
