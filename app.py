@@ -2075,7 +2075,8 @@ def page_piano():
                 st.error("Il piano è vuoto.")
             else:
                 db.save_plan(pid, st.session_state.piano_corrente,
-                             st.session_state.note_piano, nome_piano)
+                             st.session_state.note_piano, nome_piano,
+                             freq_proteiche=st.session_state.get("freq_proteiche",""))
                 st.success("Piano salvato e reso visibile al paziente.")
 
     with tab_pdf:
@@ -2317,16 +2318,30 @@ def portale_paziente():
         if not items:
             st.info("Il tuo nutrizionista non ha ancora caricato un piano.")
         else:
-            vis_paz = db.get_latest_visit(pid)
-            nut_paz = db.get_nutritionist(p_obj.get("nutritionist_id", 0))
+            vis_paz  = db.get_latest_visit(pid)
+            nut_paz  = db.get_nutritionist(p_obj.get("nutritionist_id", 0))
+            freq_prot = plan.get("freq_proteiche", "")
             pdf_d = genera_pdf_dieta(items, plan.get("note",""),
-                paziente=p_obj, nutrizionista=nut_paz, visita=vis_paz)
+                paziente=p_obj, nutrizionista=nut_paz, visita=vis_paz,
+                freq_proteiche=freq_prot)
             st.download_button("📥 Scarica PDF piano alimentare", data=pdf_d,
                                file_name="piano_alimentare.pdf", use_container_width=True,
                                type="primary")
             st.divider()
             if plan.get("note"):
-                st.info(f"**Indicazioni del nutrizionista:** {plan['note']}")
+                st.markdown(f"""
+                <div style='background:#f3f6fb;border-left:4px solid #7B1E2B;
+                    border-radius:8px;padding:14px 18px;margin-bottom:12px'>
+                  <b style='color:#7B1E2B'>📝 Spiegazioni e Consigli</b><br>
+                  <span style='white-space:pre-line'>{plan['note']}</span>
+                </div>""", unsafe_allow_html=True)
+            if freq_prot:
+                st.markdown(f"""
+                <div style='background:#fff8e1;border-left:4px solid #ff8f00;
+                    border-radius:8px;padding:14px 18px;margin-bottom:12px'>
+                  <b style='color:#ff8f00'>🥩 Frequenza Consumo Fonti Proteiche</b><br>
+                  <span style='white-space:pre-line'>{freq_prot}</span>
+                </div>""", unsafe_allow_html=True)
             df_p = pd.DataFrame(items)
             df_p["Grammatura"] = df_p["quantita"].apply(lambda q: "Libera" if q==0 else f"{int(q)}g")
             st.table(df_p[["giorno","pasto","alimento","Grammatura"]].rename(

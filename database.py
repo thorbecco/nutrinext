@@ -210,13 +210,14 @@ def _pg_init(cur):
             created_at TIMESTAMPTZ DEFAULT NOW()
         )""",
         """CREATE TABLE IF NOT EXISTS diet_plans (
-            id         SERIAL PRIMARY KEY,
-            patient_id INTEGER NOT NULL REFERENCES patients(id),
-            visit_id   INTEGER REFERENCES visits(id),
-            nome       TEXT DEFAULT 'Piano attivo',
-            note       TEXT DEFAULT '',
-            is_active  INTEGER DEFAULT 1,
-            created_at TIMESTAMPTZ DEFAULT NOW()
+            id              SERIAL PRIMARY KEY,
+            patient_id      INTEGER NOT NULL REFERENCES patients(id),
+            visit_id        INTEGER REFERENCES visits(id),
+            nome            TEXT DEFAULT 'Piano attivo',
+            note            TEXT DEFAULT '',
+            freq_proteiche  TEXT DEFAULT '',
+            is_active       INTEGER DEFAULT 1,
+            created_at      TIMESTAMPTZ DEFAULT NOW()
         )""",
         """CREATE TABLE IF NOT EXISTS diet_items (
             id       SERIAL PRIMARY KEY,
@@ -357,13 +358,14 @@ def _sqlite_init(cur):
         created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS diet_plans (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        patient_id INTEGER NOT NULL REFERENCES patients(id),
-        visit_id   INTEGER REFERENCES visits(id),
-        nome       TEXT DEFAULT 'Piano attivo',
-        note       TEXT DEFAULT '',
-        is_active  INTEGER DEFAULT 1,
-        created_at TEXT DEFAULT (datetime('now'))
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        patient_id      INTEGER NOT NULL REFERENCES patients(id),
+        visit_id        INTEGER REFERENCES visits(id),
+        nome            TEXT DEFAULT 'Piano attivo',
+        note            TEXT DEFAULT '',
+        freq_proteiche  TEXT DEFAULT '',
+        is_active       INTEGER DEFAULT 1,
+        created_at      TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS diet_items (
         id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,7 +425,8 @@ def _sqlite_init(cur):
         ("users", "logo_path",        "TEXT DEFAULT ''"),
         ("users", "logo_data",        "TEXT DEFAULT ''"),
         ("users", "last_login",       "TEXT"),
-        ("users", "is_active",        "INTEGER DEFAULT 1"),
+        ("users",       "is_active",        "INTEGER DEFAULT 1"),
+        ("diet_plans",  "freq_proteiche",   "TEXT DEFAULT ''"),
     ]
     for table, col, typedef in _migrations:
         try:
@@ -698,13 +701,14 @@ def get_plan_items(plan_id: int) -> list:
         cur.execute("SELECT * FROM diet_items WHERE plan_id=%s ORDER BY giorno,pasto", (plan_id,))
         return _fetchall(cur)
 
-def save_plan(patient_id, items: list, note="", nome="Piano attivo", visit_id=None) -> int:
+def save_plan(patient_id, items: list, note="", nome="Piano attivo",
+              visit_id=None, freq_proteiche="") -> int:
     ret = " RETURNING id" if USE_POSTGRES else ""
     with _conn() as cur:
         cur.execute("UPDATE diet_plans SET is_active=0 WHERE patient_id=%s", (patient_id,))
         cur.execute(
-            f"INSERT INTO diet_plans (patient_id,visit_id,nome,note,is_active) VALUES (%s,%s,%s,%s,1){ret}",
-            (patient_id, visit_id, nome, note))
+            f"INSERT INTO diet_plans (patient_id,visit_id,nome,note,freq_proteiche,is_active) VALUES (%s,%s,%s,%s,%s,1){ret}",
+            (patient_id, visit_id, nome, note, freq_proteiche))
         plan_id = cur.lastrowid
         for item in items:
             cur.execute(
