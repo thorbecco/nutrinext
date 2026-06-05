@@ -455,8 +455,11 @@ def _pg_migrate(cur):
             cur._cur.execute("SAVEPOINT _mig")
             cur._cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
             cur._cur.execute("RELEASE SAVEPOINT _mig")
-        except Exception:
+        except Exception as _e:
             cur._cur.execute("ROLLBACK TO SAVEPOINT _mig")
+            if "already exists" not in str(_e).lower() and "duplicate" not in str(_e).lower():
+                import sys
+                print(f"[migrate] {table}.{col}: {_e}", file=sys.stderr)
 
 
 def init_db():
@@ -738,7 +741,12 @@ def save_plan(patient_id, items: list, note="", nome="Piano attivo",
         for item in items:
             import json as _json
             comp = item.get("_componenti")
-            comp_json = _json.dumps(comp, ensure_ascii=False) if comp else None
+            comp_json = None
+            if comp:
+                try:
+                    comp_json = _json.dumps(comp, ensure_ascii=False, default=str)
+                except (TypeError, ValueError):
+                    comp_json = None
             cur.execute(
                 "INSERT INTO diet_items (plan_id,giorno,pasto,alimento,quantita,componenti_json) VALUES (%s,%s,%s,%s,%s,%s)",
                 (plan_id, item.get("Giorno"), item.get("Pasto"),

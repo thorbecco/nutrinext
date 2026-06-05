@@ -125,7 +125,7 @@ _ensure_pwa_icons()
 for k, v in {
     "user": None, "patient_obj": None, "page": "dashboard",
     "sel_patient_id": None, "piano_corrente": [], "note_piano": "",
-    "edit_appt_id": None, "componenti_composto": [],
+    "edit_appt_id": None, "componenti_composto": [], "freq_proteiche": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1447,7 +1447,7 @@ def _widget_recupero_credenziali():
 
         if st.session_state.get("_rec_id"):
             st.divider()
-            st.markdown(f"**Imposta nuova password per {st.session_state['_rec_nome']}**")
+            st.markdown(f"**Imposta nuova password per {st.session_state.get('_rec_nome', 'Utente')}**")
             np1 = st.text_input("Nuova password", type="password", key="rec_np1")
             np2 = st.text_input("Conferma password", type="password", key="rec_np2")
             if st.button("💾 Salva nuova password", type="primary", key="btn_salva_pw"):
@@ -1766,16 +1766,25 @@ def page_agenda():
             patient_id   = paz_map.get(paz_sel)
             patient_name = paz_sel if paz_sel!=paz_nomi[0] else paz_nome_ext
             data_ora_str = f"{data_appt} {ora_appt.strftime('%H:%M')}"
-            db.save_appointment(user["id"], patient_id, patient_name,
-                data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id)
-            _invalidate_nut_cache(user["id"])
-            st.session_state.edit_appt_id = None
-            st.success("Salvato."); st.rerun()
+            try:
+                db.save_appointment(user["id"], patient_id, patient_name,
+                    data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id)
+                _invalidate_nut_cache(user["id"])
+                st.session_state.edit_appt_id = None
+                st.success("Salvato.")
+            except Exception as e:
+                st.error(f"Errore salvataggio appuntamento: {e}")
+            else:
+                st.rerun()
         if edit_id and bb.button("🗑️ Elimina", type="secondary", use_container_width=True):
-            db.delete_appointment(edit_id)
-            _invalidate_nut_cache(user["id"])
-            st.session_state.edit_appt_id = None
-            st.rerun()
+            try:
+                db.delete_appointment(edit_id)
+                _invalidate_nut_cache(user["id"])
+                st.session_state.edit_appt_id = None
+            except Exception as e:
+                st.error(f"Errore eliminazione: {e}")
+            else:
+                st.rerun()
 
     # Lista appuntamenti settimana
     st.subheader("Appuntamenti della settimana")
@@ -1791,7 +1800,13 @@ def page_agenda():
         if c2.button("✏️", key=f"edit_{a['id']}"):
             st.session_state.edit_appt_id = a["id"]; st.rerun()
         if c3.button("🗑️", key=f"del_{a['id']}"):
-            db.delete_appointment(a["id"]); _invalidate_nut_cache(user["id"]); st.rerun()
+            try:
+                db.delete_appointment(a["id"])
+                _invalidate_nut_cache(user["id"])
+            except Exception as e:
+                st.error(f"Errore: {e}")
+            else:
+                st.rerun()
 
 # ==============================================================================
 # ─────────────────────────── LISTA PAZIENTI ───────────────────────────────────
@@ -2592,7 +2607,7 @@ def portale_paziente():
                 if "wizard_trovati" not in st.session_state:
                     st.session_state.wizard_trovati = set()
 
-                idx = st.session_state.wizard_idx
+                idx = st.session_state.get("wizard_idx", 0)
 
                 if idx >= tot_prodotti:
                     st.success(f"✅ Spesa completata! Hai cercato tutti i {tot_prodotti} prodotti.")
@@ -2640,8 +2655,8 @@ def portale_paziente():
                         st.rerun()
 
                     # Prodotti già trovati
-                    if st.session_state.wizard_trovati:
-                        st.caption(f"✅ Già nel carrello: {', '.join(sorted(st.session_state.wizard_trovati))}")
+                    if st.session_state.get("wizard_trovati"):
+                        st.caption(f"✅ Già nel carrello: {', '.join(sorted(st.session_state.get('wizard_trovati', set())))}")
 
             # ── MODALITÀ LISTA COMPLETA ────────────────────────────────────────
             else:
