@@ -1912,6 +1912,20 @@ def page_piano():
         lista_giorni = (["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì","Sabato","Domenica"]
                         if "Fissi" in scelta else ["Workout Day","Rest Day"])
 
+        # ── FREQUENZA CONSUMO FONTI PROTEICHE (solo modalità flessibile) ──────
+        if "Workout" in scelta:
+            if "freq_proteiche" not in st.session_state:
+                st.session_state["freq_proteiche"] = ""
+            with st.expander("🥩 Frequenza Consumo Fonti Proteiche", expanded=True):
+                st.caption("Questa sezione comparirà nel PDF dopo Spiegazioni e Consigli.")
+                st.text_area(
+                    "Indica la frequenza delle fonti proteiche:",
+                    key="freq_proteiche", height=130,
+                    placeholder="Es. Carne rossa: max 2 volte a settimana\nPesce: 3-4 volte a settimana\nUova: 3-4 a settimana\nLegumi: 2-3 volte a settimana"
+                )
+        else:
+            st.session_state["freq_proteiche"] = ""
+
         ci1, ci3, ci4 = st.columns([1,1,0.5])
         pasto_sel = ci1.selectbox("Pasto:", ["Colazione","Spuntino Mattina","Pranzo","Merenda","Cena","Pre-Nanna"])
         is_qb     = ci4.checkbox("Q.B.")
@@ -2027,19 +2041,6 @@ def page_piano():
             key="note_piano", height=200,
             placeholder="Es. Gli alimenti devono essere pesati a crudo...\nBere 2L di acqua al giorno..."
         )
-
-        # Frequenza consumo fonti proteiche — solo per dieta flessibile (Workout/Rest Day)
-        if "Workout" in scelta:
-            st.divider()
-            st.subheader("🥩 Frequenza Consumo Fonti Proteiche")
-            st.caption("Comparirà nel PDF subito dopo Spiegazioni e Consigli.")
-            if "freq_proteiche" not in st.session_state:
-                st.session_state["freq_proteiche"] = ""
-            st.text_area(
-                "Indica la frequenza delle fonti proteiche (carne, pesce, uova, legumi…):",
-                key="freq_proteiche", height=150,
-                placeholder="Es. Carne rossa: max 2 volte a settimana\nPesce: 3-4 volte a settimana\nUova: 3-4 a settimana..."
-            )
 
         st.divider()
 
