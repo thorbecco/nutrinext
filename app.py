@@ -710,64 +710,63 @@ def genera_pdf_spesa(items, paziente: dict = None, nutrizionista: dict = None, v
         elif al:
             agg[al] = agg.get(al, 0) + q
 
-    pdf = FPDF()
-    pdf.set_margins(20, 20, 20)
+    pdf = _NutriPDF(titolo_nut=titolo_nut, nome_paz=nome_paz)
+    pdf._skip_footer_page = 0   # footer su tutte le pagine
+    pdf.set_margins(15, 20, 15)
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_auto_page_break(auto=True, margin=22)
     _running_header(pdf, nut)
 
     pdf.set_font("Arial", "B", 20); pdf.set_text_color(_PDF_R, _PDF_G, _PDF_B)
     pdf.cell(0, 12, "LISTA DELLA SPESA", ln=True, align="C")
-    pdf.set_font("Arial", "", 10); pdf.set_text_color(80,80,80)
+    pdf.set_font("Arial", "", 10); pdf.set_text_color(80, 80, 80)
     pdf.cell(0, 5, _safe(f"Paziente: {nome_paz}  -  Data: {vis.get('data', datetime.now().strftime('%d/%m/%Y'))}"), ln=True, align="C")
-    pdf.ln(6)
+    pdf.ln(5)
 
     _titolo_sezione(pdf, "PRODOTTI DA ACQUISTARE")
     pdf.set_text_color(0, 0, 0)
-    pdf.set_text_color(0, 0, 0)
-    pdf.ln(3)
+    pdf.ln(2)
 
-    col_w = 90  # due colonne
     items_list = sorted(agg.items())
-    mid = math.ceil(len(items_list) / 2)
-    left  = items_list[:mid]
-    right = items_list[mid:]
+    pdf.set_font("Arial", "", 9)
+    pdf.set_fill_color(232, 234, 246)
 
-    y_start = pdf.get_y()
-    pdf.set_font("Arial", "", 10)
+    # Due colonne per riga, layout relativo (funziona con auto_page_break)
+    ROW_H   = 8
+    CHK_W   = 6      # checkbox
+    QTY_W   = 20     # quantità
+    GAP_W   = 8      # spazio tra colonne
+    usable  = pdf.w - pdf.l_margin - pdf.r_margin  # ~180mm
+    col_w   = (usable - GAP_W) / 2                 # ~86mm
+    name_w  = col_w - CHK_W - QTY_W               # ~60mm
 
-    for i, (alim, qtot) in enumerate(left):
-        qtxt = "q.b." if qtot == 0 else f"{int(qtot)}g"
-        y = y_start + i * 9
-        pdf.set_xy(12, y)
-        pdf.set_fill_color(232, 234, 246)
-        pdf.cell(5, 7, "", border=1, fill=True)
-        pdf.set_x(20)
-        pdf.cell(col_w - 12, 7, _safe(alim[:35]), border="B")
-        pdf.cell(18, 7, qtxt, border="B", align="R")
+    for i in range(0, len(items_list), 2):
+        l_alim, l_qty = items_list[i]
+        l_qtxt = "q.b." if l_qty == 0 else f"{int(l_qty)}g"
+        r_item = items_list[i + 1] if i + 1 < len(items_list) else None
 
-    for i, (alim, qtot) in enumerate(right):
-        qtxt = "q.b." if qtot == 0 else f"{int(qtot)}g"
-        y = y_start + i * 9
-        pdf.set_xy(108, y)
-        pdf.set_fill_color(232, 234, 246)
-        pdf.cell(5, 7, "", border=1, fill=True)
-        pdf.set_x(116)
-        pdf.cell(col_w - 12, 7, _safe(alim[:35]), border="B")
-        pdf.cell(18, 7, qtxt, border="B", align="R")
+        # Colonna sinistra
+        pdf.cell(CHK_W, ROW_H, "", border=1, fill=True)
+        pdf.cell(name_w, ROW_H, _safe(l_alim), border="B")
+        pdf.cell(QTY_W, ROW_H, l_qtxt, border="B", align="R")
 
-    max_rows = max(len(left), len(right))
-    pdf.set_y(y_start + max_rows * 9 + 8)
+        # Gap
+        pdf.cell(GAP_W, ROW_H, "")
 
-    # Note
+        # Colonna destra
+        if r_item:
+            r_alim, r_qty = r_item
+            r_qtxt = "q.b." if r_qty == 0 else f"{int(r_qty)}g"
+            pdf.cell(CHK_W, ROW_H, "", border=1, fill=True)
+            pdf.cell(name_w, ROW_H, _safe(r_alim), border="B")
+            pdf.cell(QTY_W, ROW_H, r_qtxt, border="B", align="R", ln=True)
+        else:
+            pdf.ln()
+
+    pdf.ln(4)
     pdf.set_font("Arial", "I", 8)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 5, _safe(f"Totale prodotti: {len(agg)}  -  Piano: {vis.get('data','')}"), align="C")
-
-    # Footer
-    pdf.set_y(-15)
-    pdf.set_font("Arial", "I", 7); pdf.set_text_color(160,160,160)
-    pdf.cell(0, 5, _safe(f"{titolo_nut} - {nome_paz} - {datetime.now().strftime('%d/%m/%Y')}"), align="C")
+    pdf.cell(0, 5, _safe(f"Totale prodotti: {len(agg)}"), ln=True, align="C")
 
     return pdf.output(dest="S").encode("latin-1")
 
@@ -1473,7 +1472,7 @@ def page_login():
         st.image(_img("logos/logo_login.png"), use_container_width=True)
         st.markdown("""
         <div style='text-align:center;margin-bottom:20px'>
-          <p style='color:#666;margin-top:4px'>Software clinico per nutrizionisti</p>
+          <p style='color:#666;margin-top:4px'>Software per nutrizionisti</p>
         </div>""", unsafe_allow_html=True)
         username = st.text_input("Username", placeholder="Inserisci username")
         password = st.text_input("Password", type="password", placeholder="Inserisci password")
