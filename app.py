@@ -2729,11 +2729,14 @@ def portale_paziente():
                 _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
                 nut = db.get_nutritionist(p_obj.get("nutritionist_id", 0))
                 if nut and nut.get("email_studio"):
-                    db.send_notification_messaggio_nutrizionista(
+                    ok, msg = db.send_notification_messaggio_nutrizionista(
                         nut["email_studio"],
                         nut.get("nome", ""),
                         f"{p_obj.get('nome','')} {p_obj.get('cognome','')}".strip(),
                         _app_url)
+                    import logging; logging.warning(f"[EMAIL nutrizionista] ok={ok} msg={msg} to={nut['email_studio']}")
+                else:
+                    import logging; logging.warning(f"[EMAIL nutrizionista] SKIP — nut={nut} email_studio={nut.get('email_studio') if nut else 'N/A'}")
                 st.rerun()
 
 # ==============================================================================
