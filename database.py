@@ -1099,23 +1099,48 @@ def delete_patient_admin(patient_id: int):
 
 
 # ==============================================================================
-# EMAIL — recupero credenziali
+# EMAIL — SMTP Aruba
 # ==============================================================================
+
+def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
+    """Invia email via SMTP. Richiede env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    host     = os.environ.get("SMTP_HOST", "")
+    port     = int(os.environ.get("SMTP_PORT", "465"))
+    user     = os.environ.get("SMTP_USER", "")
+    password = os.environ.get("SMTP_PASSWORD", "")
+    from_    = os.environ.get("SMTP_FROM", user)
+
+    if not all([host, user, password]):
+        return False, "Servizio email non configurato."
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"NutriNext <{from_}>"
+    msg["To"]      = to_email
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=10) as s:
+                s.login(user, password)
+                s.sendmail(from_, to_email, msg.as_bytes())
+        else:
+            with smtplib.SMTP(host, port, timeout=10) as s:
+                s.starttls()
+                s.login(user, password)
+                s.sendmail(from_, to_email, msg.as_bytes())
+        return True, "Email inviata."
+    except Exception as e:
+        return False, f"Errore invio email: {e}"
+
 
 def send_credentials_email(to_email: str, username: str, new_password: str,
                             app_url: str = "") -> tuple[bool, str]:
-    """Invia email con username e nuova password tramite Brevo API HTTP.
-    Richiede env: BREVO_API_KEY, SMTP_FROM."""
-    import urllib.request
-    import json as _json
-
-    api_key   = os.environ.get("BREVO_API_KEY", "")
-    smtp_from = os.environ.get("SMTP_FROM", "noreply@nutrinext.app")
-
-    if not api_key:
-        return False, "Servizio email non configurato. Contatta l'amministratore."
-
-    body_text = f"""Ciao,
+    body = f"""Ciao,
 
 Hai richiesto il recupero delle credenziali di accesso a NutriNext.
 
@@ -1131,29 +1156,52 @@ Ti consigliamo di cambiare la password dopo il primo accesso.
 Cordiali saluti,
 Il team NutriNext
 """
+    return _send_email(to_email, "NutriNext — Recupero credenziali", body)
 
-    payload = _json.dumps({
-        "sender":  {"name": "NutriNext", "email": smtp_from},
-        "to":      [{"email": to_email}],
-        "subject": "NutriNext — Recupero credenziali",
-        "textContent": body_text
-    }).encode("utf-8")
 
-    req = urllib.request.Request(
-        "https://api.brevo.com/v3/smtp/email",
-        data=payload,
-        headers={
-            "api-key":      api_key,
-            "Content-Type": "application/json",
-            "Accept":       "application/json",
-        },
-        method="POST"
-    )
+def send_notification_piano(to_email: str, nome_paziente: str,
+                             nome_piano: str, app_url: str = "") -> tuple[bool, str]:
+    """Notifica al paziente: nuovo piano alimentare disponibile."""
+    body = f"""Ciao {nome_paziente},
 
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            if resp.status in (200, 201):
-                return True, "Email inviata con successo."
-            return False, f"Risposta Brevo: {resp.status}"
-    except Exception as e:
-        return False, f"Errore invio email: {e}"
+il tuo nutrizionista ha aggiornato il tuo piano alimentare.
+
+Piano: {nome_piano}
+
+{"Accedi all'app per visualizzarlo: " + app_url if app_url else "Accedi all'app NutriNext per visualizzarlo."}
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Nuovo piano alimentare disponibile", body)
+
+
+def send_notification_messaggio_paziente(to_email: str, nome_paziente: str,
+                                          app_url: str = "") -> tuple[bool, str]:
+    """Notifica al paziente: nuovo messaggio dal nutrizionista."""
+    body = f"""Ciao {nome_paziente},
+
+hai ricevuto un nuovo messaggio dal tuo nutrizionista.
+
+{"Accedi all'app per leggerlo: " + app_url if app_url else "Accedi all'app NutriNext per leggerlo."}
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Hai un nuovo messaggio", body)
+
+
+def send_notification_messaggio_nutrizionista(to_email: str, nome_nutrizionista: str,
+                                               nome_paziente: str,
+                                               app_url: str = "") -> tuple[bool, str]:
+    """Notifica al nutrizionista: nuovo messaggio dal paziente."""
+    body = f"""Ciao {nome_nutrizionista},
+
+il paziente {nome_paziente} ti ha inviato un nuovo messaggio.
+
+{"Accedi all'app per rispondere: " + app_url if app_url else "Accedi all'app NutriNext per rispondere."}
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, f"NutriNext — Messaggio da {nome_paziente}", body)

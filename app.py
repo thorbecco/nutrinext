@@ -2251,6 +2251,13 @@ def page_piano():
                              st.session_state.note_piano, nome_piano,
                              freq_proteiche=st.session_state.get("freq_proteiche",""))
                 _invalidate_patient_cache(pid)
+                # Notifica email al paziente
+                _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+                if p.get("email"):
+                    db.send_notification_piano(
+                        p["email"],
+                        f"{p.get('nome','')} {p.get('cognome','')}".strip(),
+                        nome_piano, _app_url)
                 st.success("Piano salvato e reso visibile al paziente.")
 
     with tab_pdf:
@@ -2379,7 +2386,16 @@ def page_messaggi_nut():
     testo = st.text_input("Scrivi al paziente:")
     if st.button("Invia", type="primary"):
         if testo:
-            db.send_message(pid, "Nutrizionista", testo); _invalidate_patient_cache(pid); st.rerun()
+            db.send_message(pid, "Nutrizionista", testo)
+            _invalidate_patient_cache(pid)
+            # Notifica email al paziente
+            _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+            if p.get("email"):
+                db.send_notification_messaggio_paziente(
+                    p["email"],
+                    f"{p.get('nome','')} {p.get('cognome','')}".strip(),
+                    _app_url)
+            st.rerun()
 
 # ==============================================================================
 # ─────────────────────────── ARCHIVIO TEMPLATE ────────────────────────────────
@@ -2707,7 +2723,18 @@ def portale_paziente():
         testo = st.text_input("Scrivi al nutrizionista:")
         if st.button("Invia", type="primary"):
             if testo:
-                db.send_message(pid, "Paziente", testo); _invalidate_patient_cache(pid); st.rerun()
+                db.send_message(pid, "Paziente", testo)
+                _invalidate_patient_cache(pid)
+                # Notifica email al nutrizionista
+                _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+                nut = db.get_nutritionist(p_obj.get("nutritionist_id", 0))
+                if nut and nut.get("email_studio"):
+                    db.send_notification_messaggio_nutrizionista(
+                        nut["email_studio"],
+                        nut.get("nome", ""),
+                        f"{p_obj.get('nome','')} {p_obj.get('cognome','')}".strip(),
+                        _app_url)
+                st.rerun()
 
 # ==============================================================================
 # ==============================================================================
