@@ -1099,41 +1099,42 @@ def delete_patient_admin(patient_id: int):
 
 
 # ==============================================================================
-# EMAIL — SMTP Aruba
+# EMAIL — Resend
 # ==============================================================================
 
 def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
-    """Invia email via SMTP. Richiede env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+    """Invia email via Resend. Richiede env: RESEND_API_KEY, RESEND_FROM (opzionale)."""
+    import urllib.request, urllib.error, json
 
-    host     = os.environ.get("SMTP_HOST", "")
-    port     = int(os.environ.get("SMTP_PORT", "465"))
-    user     = os.environ.get("SMTP_USER", "")
-    password = os.environ.get("SMTP_PASSWORD", "")
-    from_    = os.environ.get("SMTP_FROM", user)
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    from_   = os.environ.get("RESEND_FROM", "NutriNext <noreply@nutrinextpro.it>")
 
-    if not all([host, user, password]):
-        return False, "Servizio email non configurato."
+    if not api_key:
+        return False, "Servizio email non configurato (RESEND_API_KEY mancante)."
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"NutriNext <{from_}>"
-    msg["To"]      = to_email
-    msg.attach(MIMEText(body, "plain", "utf-8"))
+    payload = json.dumps({
+        "from":    from_,
+        "to":      [to_email],
+        "subject": subject,
+        "text":    body,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type":  "application/json",
+        },
+        method="POST",
+    )
 
     try:
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=10) as s:
-                s.login(user, password)
-                s.sendmail(from_, to_email, msg.as_bytes())
-        else:
-            with smtplib.SMTP(host, port, timeout=10) as s:
-                s.starttls()
-                s.login(user, password)
-                s.sendmail(from_, to_email, msg.as_bytes())
-        return True, "Email inviata."
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return True, "Email inviata."
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        return False, f"Errore Resend HTTP {e.code}: {err_body}"
     except Exception as e:
         return False, f"Errore invio email: {e}"
 
