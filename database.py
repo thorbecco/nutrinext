@@ -619,6 +619,21 @@ def get_patient(patient_id: int) -> dict:
         cur.execute("SELECT * FROM patients WHERE id=%s", (patient_id,))
         return _fetchone(cur)
 
+def update_patient_profile(patient_id: int, email: str, telefono: str,
+                            new_password: str = "") -> None:
+    """Aggiorna email, telefono e (opzionalmente) password del paziente."""
+    with _conn() as cur:
+        if new_password:
+            cur.execute(
+                "UPDATE patients SET email=%s, telefono=%s, password_hash=%s WHERE id=%s",
+                (email, telefono, _hash(new_password), patient_id)
+            )
+        else:
+            cur.execute(
+                "UPDATE patients SET email=%s, telefono=%s WHERE id=%s",
+                (email, telefono, patient_id)
+            )
+
 def save_patient(nutritionist_id, nome, cognome, email, sesso, data_nascita,
                  telefono, note_anamnesi, username="", password="", patient_id=None):
     ph  = _hash(password) if password else None

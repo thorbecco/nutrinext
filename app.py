@@ -2474,7 +2474,8 @@ def portale_paziente():
 
     nav_p = {"home_p":"🏠 Home","piano_p":"📅 Piano","spesa_p":"🛒 Spesa",
              "carrello_p":"🏪 Carrello Digitale",
-             "visita_p":"📊 Dati Visita","msg_p":"💬 Messaggi"}
+             "visita_p":"📊 Dati Visita","msg_p":"💬 Messaggi",
+             "profilo_p":"⚙️ Profilo"}
     for key, label in nav_p.items():
         badge = ""
         if key == "msg_p":
@@ -2743,6 +2744,36 @@ def portale_paziente():
                     import logging; logging.warning(f"[EMAIL nutrizionista] ok={ok} msg={msg} to={nut['email_studio']}")
                 else:
                     import logging; logging.warning(f"[EMAIL nutrizionista] SKIP — nut={nut} email_studio={nut.get('email_studio') if nut else 'N/A'}")
+                st.rerun()
+
+    elif page == "profilo_p":
+        st.title("⚙️ Profilo & Impostazioni")
+        st.subheader("👤 I tuoi dati")
+
+        email_val   = st.text_input("📧 Email *", value=p_obj.get("email", ""),
+                                    placeholder="es. mario.rossi@email.it")
+        telefono_val = st.text_input("📞 Telefono", value=p_obj.get("telefono", ""),
+                                     placeholder="es. +39 333 1234567")
+
+        st.divider()
+        st.subheader("🔑 Cambia password")
+        st.caption("Lascia vuoto se non vuoi cambiarla.")
+        np1 = st.text_input("Nuova password", type="password", key="paz_np1")
+        np2 = st.text_input("Conferma nuova password", type="password", key="paz_np2")
+
+        st.divider()
+        if st.button("💾 Salva", type="primary", use_container_width=True):
+            if not email_val.strip():
+                st.error("L'email è obbligatoria.")
+            elif np1 and np1 != np2:
+                st.error("Le password non coincidono.")
+            else:
+                new_pw = np1.strip() if np1 else ""
+                db.update_patient_profile(pid, email_val.strip(), telefono_val.strip(), new_pw)
+                # aggiorna sessione
+                st.session_state.user["email"] = email_val.strip()
+                st.session_state.user["telefono"] = telefono_val.strip()
+                st.success("Profilo aggiornato!")
                 st.rerun()
 
 # ==============================================================================
