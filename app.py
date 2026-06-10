@@ -2503,7 +2503,7 @@ def portale_paziente():
     </div>""", unsafe_allow_html=True)
     st.sidebar.divider()
 
-    nav_p = {"home_p":"🏠 Home","piano_p":"📅 Piano","spesa_p":"🛒 Spesa",
+    nav_p = {"home_p":"🏠 Home","piano_p":"📅 Piano Alimentare","spesa_p":"🛒 Spesa",
              "carrello_p":"🏪 Carrello Digitale",
              "visita_p":"📊 Dati Visita","msg_p":"💬 Messaggi",
              "profilo_p":"⚙️ Profilo"}
