@@ -2,14 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from fpdf import FPDF
-import json, math, os, io, base64, secrets
+import json, math, os, io, base64, secrets, re
 from datetime import datetime, date, timedelta
+from urllib.parse import quote as _url_quote
 
 # Path assoluto della cartella dell'app (necessario per st.image con path relativi)
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 def _img(relative: str) -> str:
     return os.path.join(_APP_DIR, relative)
 
+@st.cache_data
 def _img_b64(relative: str) -> str:
     """Restituisce l'immagine come stringa base64 per uso inline in HTML."""
     path = _img(relative)
@@ -19,6 +21,25 @@ def _img_b64(relative: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 import database as db
+
+# ── Regex pre-compilate (evitano ricompilazione ad ogni chiamata) ──────────────
+_RE_PARENTESI    = re.compile(r'\([^)]*\)')
+_RE_FRECCE       = re.compile(r'à|→|➔')
+_RE_BULLET       = re.compile(r'^[•\-\*]\s*')
+_RE_SLASH        = re.compile(r'\s*/\s*')
+_RE_PESO_RANGE   = re.compile(r'^(\d+)\s*(?:g|gr|ml)?\s*[-–]\s*\d+\s*(?:g|gr|ml)\s+(.+)', re.IGNORECASE)
+_RE_PESO_NOME    = re.compile(r'^(\d+(?:[.,]\d+)?)\s*(?:g|gr|ml)\s+(.+)', re.IGNORECASE)
+_RE_QTA_INLINE   = re.compile(r'(\d+)\s*(?:g|gr|ml)\b', re.IGNORECASE)
+_RE_QTA_STRIP    = re.compile(r'\d+\s*(?:g|gr|ml)\b\s*', re.IGNORECASE)
+_RE_ASTERISCHI   = re.compile(r'\*+')
+_RE_GIORNO_NUM   = re.compile(r'\bGiorno\s+(\d)\b', re.IGNORECASE)
+_RE_PASTO_MAP = {
+    "colazione": re.compile(r'\bcolazione\b', re.IGNORECASE),
+    "spuntino":  re.compile(r'\bspuntino\b',  re.IGNORECASE),
+    "pranzo":    re.compile(r'\bpranzo\b',    re.IGNORECASE),
+    "merenda":   re.compile(r'\bmerenda\b',   re.IGNORECASE),
+    "cena":      re.compile(r'\bcena\b',      re.IGNORECASE),
+}
 
 try:
     import qrcode
@@ -45,8 +66,10 @@ NN_BLUE  = "#0A2540"   # Blu Notte
 NN_GREEN = "#5FA83D"   # Verde Brillante
 NN_LIGHT = "#f4f7f4"   # Sfondo chiaro
 
-# CSS globale
-st.markdown(f"""
+# CSS globale — cachato per non rigenerarlo ad ogni rerun
+@st.cache_resource
+def _apply_global_css():
+    st.markdown(f"""
 <link rel="manifest" href="/app/static/manifest.json">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -89,6 +112,8 @@ h1, h2, h3 {{ color: {NN_BLUE}; }}
 </style>
 """, unsafe_allow_html=True)
 
+_apply_global_css()
+
 # ==============================================================================
 # DB INIT
 # ==============================================================================
@@ -97,6 +122,7 @@ db.init_db()
 # ==============================================================================
 # PWA STATIC ICONS — genera icone per manifest se mancanti
 # ==============================================================================
+@st.cache_resource
 def _ensure_pwa_icons():
     static_dir = os.path.join(_APP_DIR, "static")
     os.makedirs(static_dir, exist_ok=True)
@@ -152,9 +178,12 @@ def load_database():
     for col in ["Kcal_100g","Pro_100g","Cho_100g","Fat_100g"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-    df["Marca"]   = df["Marca"].fillna("")
-    df["Barcode"] = df["Barcode"].fillna("") if "Barcode" in df.columns else ""
-    return df.drop_duplicates(subset=["Alimento_Nome","Marca"]).sort_values("Alimento_Nome").reset_index(drop=True)
+    df["Marca"]   = df["Marca"].fillna("").str.strip()
+    df["Barcode"] = df["Barcode"].fillna("").str.strip() if "Barcode" in df.columns else ""
+    df = df.drop_duplicates(subset=["Alimento_Nome","Marca"]).sort_values("Alimento_Nome").reset_index(drop=True)
+    # Pre-calcola colonna lowercase per ricerche veloci
+    df["_nome_lower"] = df["Alimento_Nome"].str.lower()
+    return df
 
 DATABASE = load_database()
 
@@ -831,8 +860,7 @@ def url_supermercato(supermercato: str, alimento: str, marca: str = "") -> str:
         return ""
     # Query: preferisci "Marca NomeProdotto" per risultati più precisi
     query = f"{marca} {alimento}".strip() if marca else alimento
-    import urllib.parse
-    return template.format(q=urllib.parse.quote(query))
+    return template.format(q=_url_quote(query))
 
 COLORI_TIPO = {
     "Prima Visita":"#3f51b5","Controllo":"#4caf50",
@@ -857,10 +885,9 @@ _GIORNO_IT_MAP = {
 
 def _pdf_clean_name(raw: str) -> str:
     """Pulisce un nome alimento: rimuove parentesi, tronca alle parole utili."""
-    import re
     s = raw.strip().lstrip('•').lstrip('-').strip()
-    s = re.sub(r'\([^)]*\)', '', s)           # rimuovi parentesi
-    s = re.split(r'à|→|➔', s)[0]             # stop alle frecce
+    s = _RE_PARENTESI.sub('', s)              # rimuovi parentesi
+    s = _RE_FRECCE.split(s)[0]               # stop alle frecce
     s = s.rstrip('.,;:').strip()
     # Ferma a parole "filler" dopo almeno 1 parola significativa
     STOP = {'preferibilmente','integrali','integrale','a','da','conditi','condita',
@@ -879,27 +906,26 @@ def _pdf_clean_name(raw: str) -> str:
 
 def _estrai_da_bullet(line: str) -> list:
     """Estrae coppie (nome, qty_g) da una riga bullet stile dieta italiana."""
-    import re
-    line = re.sub(r'^[•\-\*]\s*', '', line).strip()
+    line = _RE_BULLET.sub('', line).strip()
     if not line:
         return []
 
     results = []
     # Split su "/" per alternative con quantità proprie: "170g jocca / 100g feta"
-    parti = re.split(r'\s*/\s*', line)
+    parti = _RE_SLASH.split(line)
 
     for part in parti:
         part = part.strip()
 
         # Range "NUMg-NUMg nome" → prendi il primo
-        m = re.match(r'^(\d+)\s*(?:g|gr|ml)?\s*[-–]\s*\d+\s*(?:g|gr|ml)\s+(.+)', part, re.IGNORECASE)
+        m = _RE_PESO_RANGE.match(part)
         if m:
             nome = _pdf_clean_name(m.group(2))
             if nome: results.append((nome, int(m.group(1))))
             continue
 
         # "NUMg nome" o "NUMml nome"
-        m = re.match(r'^(\d+(?:[.,]\d+)?)\s*(?:g|gr|ml)\s+(.+)', part, re.IGNORECASE)
+        m = _RE_PESO_NOME.match(part)
         if m:
             nome = _pdf_clean_name(m.group(2))
             qty  = int(float(m.group(1).replace(',','.')))
@@ -910,7 +936,7 @@ def _estrai_da_bullet(line: str) -> list:
     if not results and '+' in line:
         for sub in line.split('+'):
             sub = sub.strip()
-            m = re.match(r'^(\d+(?:[.,]\d+)?)\s*(?:g|gr|ml)\s+(.+)', sub, re.IGNORECASE)
+            m = _RE_PESO_NOME.match(sub)
             if m:
                 nome = _pdf_clean_name(m.group(2))
                 qty  = int(float(m.group(1).replace(',','.')))
@@ -929,7 +955,6 @@ def _parse_flessibile(lines: list) -> list:
     Parser per diete con PROTOCOLLO N.1 (Workout Day) / PROTOCOLLO N.2 (Rest Day).
     Colazione e Spuntini prima dei protocolli vengono duplicati su entrambi i giorni.
     """
-    import re
     SALTA_SEZIONI = {'frequenze di consumo','idee pranzo','esempio schema',
                      'dati antropometrici','spiegazione e consigli'}
     SALTA_RIGHE   = ['fonte di carboidrati','da consumare con','fonte proteica',
@@ -995,7 +1020,6 @@ def _parse_tabella_coordinate(page) -> list:
     Parser per PDF con layout tabellare a colonne (Giorno 1…7 o Lunedì…Domenica).
     Usa le coordinate X/Y delle parole per assegnare ciascuna a cella corretta.
     """
-    import re
     words = page.extract_words(keep_blank_chars=False, x_tolerance=3, y_tolerance=3)
     if not words:
         return []
@@ -1082,14 +1106,14 @@ def _parse_tabella_coordinate(page) -> list:
     items = []
     for (day, pasto), wlist in cells.items():
         testo = ' '.join(wlist)
-        testo = re.sub(r'\*+', '', testo).strip()
+        testo = _RE_ASTERISCHI.sub('', testo).strip()
         if not testo or testo in ('-', '—'):
             continue
         # Cerca quantità nel testo (se presenti)
-        m = re.search(r'(\d+)\s*(?:g|gr|ml)\b', testo, re.IGNORECASE)
+        m = _RE_QTA_INLINE.search(testo)
         qty = int(m.group(1)) if m else 0
         # Pulisce testo da numeri di quantità per usarlo come nome
-        nome = re.sub(r'\d+\s*(?:g|gr|ml)\b\s*', '', testo, flags=re.IGNORECASE).strip()
+        nome = _RE_QTA_STRIP.sub('', testo).strip()
         nome = nome[:80] if nome else testo[:80]
         items.append({"Giorno": day, "Pasto": pasto, "Alimento": nome, "Quantità": qty})
 
@@ -1101,7 +1125,6 @@ def _parse_giornaliero_testo(lines: list) -> list:
     Fallback testuale per PDF giornalieri senza layout tabellare riconoscibile.
     Cerca 'Giorno N' o nomi di giorno + pasto + alimenti con grammatura.
     """
-    import re
     items = []
     giorno = "Lunedì"
     pasto  = "Pranzo"
@@ -1115,7 +1138,7 @@ def _parse_giornaliero_testo(lines: list) -> list:
         ll = ls.lower()
 
         # Giorno numerico
-        m = re.search(r'\bGiorno\s+(\d)\b', ls, re.IGNORECASE)
+        m = _RE_GIORNO_NUM.search(ls)
         if m:
             giorno = _GIORNO_NUM_MAP.get(m.group(1), giorno); continue
 
@@ -1125,11 +1148,11 @@ def _parse_giornaliero_testo(lines: list) -> list:
                 giorno = val; break
 
         # Pasto
-        if re.search(r'\bcolazione\b', ll): pasto = "Colazione"
-        elif re.search(r'\bspuntino\b', ll): pasto = "Spuntino Mattina"
-        elif re.search(r'\bpranzo\b', ll):   pasto = "Pranzo"
-        elif re.search(r'\bmerenda\b', ll):  pasto = "Merenda"
-        elif re.search(r'\bcena\b', ll):     pasto = "Cena"
+        if _RE_PASTO_MAP["colazione"].search(ll): pasto = "Colazione"
+        elif _RE_PASTO_MAP["spuntino"].search(ll): pasto = "Spuntino Mattina"
+        elif _RE_PASTO_MAP["pranzo"].search(ll):   pasto = "Pranzo"
+        elif _RE_PASTO_MAP["merenda"].search(ll):  pasto = "Merenda"
+        elif _RE_PASTO_MAP["cena"].search(ll):     pasto = "Cena"
 
         # Quantità + alimento
         for m in re.finditer(r'(\d+)\s*(?:g|gr|ml)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-\']{2,})', ls):
@@ -1189,32 +1212,39 @@ def _match_alimento_db(nome: str) -> str:
     if DATABASE.empty:
         return nome
     nome_low = nome.lower()
-    exact = DATABASE[DATABASE["Alimento_Nome"].str.lower() == nome_low]
-    if not exact.empty:
-        return exact["Alimento_Nome"].values[0]
-    partial = DATABASE[DATABASE["Alimento_Nome"].str.lower().str.contains(nome_low, na=False)]
-    if not partial.empty:
-        return partial["Alimento_Nome"].values[0]
-    for _, row in DATABASE.iterrows():
-        if row["Alimento_Nome"].lower() in nome_low:
-            return row["Alimento_Nome"]
+    nl = DATABASE["_nome_lower"]
+    # 1) corrispondenza esatta
+    mask = nl == nome_low
+    if mask.any():
+        return DATABASE.loc[mask, "Alimento_Nome"].values[0]
+    # 2) db contiene il nome cercato
+    mask2 = nl.str.contains(nome_low, na=False, regex=False)
+    if mask2.any():
+        return DATABASE.loc[mask2, "Alimento_Nome"].values[0]
+    # 3) nome cercato contiene voce db (vectorized)
+    mask3 = nl.apply(lambda x: x in nome_low)
+    if mask3.any():
+        return DATABASE.loc[mask3, "Alimento_Nome"].values[0]
     return nome
 
 def macros_da_items(items):
     if not items: return None
-    righe = []
-    for r in items:
-        alim = r.get("Alimento", r.get("alimento",""))
-        q    = float(r.get("Quantità", r.get("quantita",0)) or 0)
-        gg   = r.get("Giorno", r.get("giorno",""))
-        m = DATABASE[DATABASE["Alimento_Nome"]==alim]
-        if not m.empty and q > 0:
-            f = q/100
-            righe.append({"Giorno":gg,
-                "Cal": m["Kcal_100g"].values[0]*f, "Pro": m["Pro_100g"].values[0]*f,
-                "Cho": m["Cho_100g"].values[0]*f,  "Fat": m["Fat_100g"].values[0]*f})
-    if not righe: return None
-    return pd.DataFrame(righe).groupby("Giorno").sum().reset_index()
+    df = pd.DataFrame([{
+        "Giorno": r.get("Giorno", r.get("giorno","")),
+        "Alimento": r.get("Alimento", r.get("alimento","")),
+        "q": float(r.get("Quantità", r.get("quantita",0)) or 0)
+    } for r in items])
+    df = df[df["q"] > 0]
+    if df.empty: return None
+    df = df.merge(DATABASE[["Alimento_Nome","Kcal_100g","Pro_100g","Cho_100g","Fat_100g"]],
+                  left_on="Alimento", right_on="Alimento_Nome", how="inner")
+    if df.empty: return None
+    f = df["q"] / 100
+    df["Cal"] = df["Kcal_100g"] * f
+    df["Pro"] = df["Pro_100g"]  * f
+    df["Cho"] = df["Cho_100g"]  * f
+    df["Fat"] = df["Fat_100g"]  * f
+    return df.groupby("Giorno")[["Cal","Pro","Cho","Fat"]].sum().reset_index()
 
 def eta_da_nascita(data_nascita_str):
     try:
@@ -2016,20 +2046,21 @@ def page_piano():
 
         if not DATABASE.empty:
             has_m = "Marca" in DATABASE.columns
-            df_src = DATABASE.copy()
 
-            # Filtra per tipo
+            # Filtra per tipo (usa maschere, evita .copy())
             if has_m and tipo_db == "Con marca":
-                df_src = df_src[df_src["Marca"].fillna("").str.strip() != ""]
+                df_src = DATABASE[DATABASE["Marca"] != ""]
             elif has_m and tipo_db == "Generico":
-                df_src = df_src[df_src["Marca"].fillna("").str.strip() == ""]
+                df_src = DATABASE[DATABASE["Marca"] == ""]
+            else:
+                df_src = DATABASE
 
-            # Filtra per testo
+            # Filtra per testo usando colonna _nome_lower pre-calcolata
             if query.strip():
                 q = query.strip().lower()
-                msk = df_src["Alimento_Nome"].str.lower().str.contains(q, na=False)
+                msk = df_src["_nome_lower"].str.contains(q, na=False, regex=False)
                 if has_m:
-                    msk |= df_src["Marca"].fillna("").str.lower().str.contains(q, na=False)
+                    msk |= df_src["Marca"].str.lower().str.contains(q, na=False, regex=False)
                 df_f = df_src[msk].head(200)
             else:
                 df_f = df_src.head(100)
@@ -2582,12 +2613,19 @@ def portale_paziente():
                 if al and al not in ("Nessun risultato", "DB non caricato"):
                     agg[al] = agg.get(al, 0) + q
 
-            prodotti = []
-            for al, qtot in sorted(agg.items()):
-                row     = DATABASE[DATABASE["Alimento_Nome"] == al] if not DATABASE.empty else pd.DataFrame()
-                marca   = _str_pulita(row["Marca"].values[0])   if not row.empty and "Marca"   in DATABASE.columns else ""
-                barcode = _str_pulita(row["Barcode"].values[0]) if not row.empty and "Barcode" in DATABASE.columns else ""
-                prodotti.append({"nome": al, "marca": marca, "barcode": barcode, "qtot": qtot})
+            # Merge unico invece di loop con lookup per ogni alimento
+            agg_df = pd.DataFrame(list(agg.items()), columns=["nome", "qtot"]).sort_values("nome")
+            if not DATABASE.empty:
+                cols = ["Alimento_Nome"] + [c for c in ["Marca","Barcode"] if c in DATABASE.columns]
+                agg_df = agg_df.merge(DATABASE[cols], left_on="nome",
+                                      right_on="Alimento_Nome", how="left")
+                agg_df["Marca"]   = agg_df.get("Marca",   pd.Series()).fillna("").apply(_str_pulita)
+                agg_df["Barcode"] = agg_df.get("Barcode", pd.Series()).fillna("").apply(_str_pulita)
+            else:
+                agg_df["Marca"] = ""; agg_df["Barcode"] = ""
+            prodotti = [{"nome": r["nome"], "marca": r.get("Marca",""),
+                         "barcode": r.get("Barcode",""), "qtot": r["qtot"]}
+                        for _, r in agg_df.iterrows()]
 
             tot_prodotti = len(prodotti)
 
@@ -2606,7 +2644,6 @@ def portale_paziente():
             sup_conf = SUPERMERCATI[sup_sel]
 
             # ── Condividi via WhatsApp ─────────────────────────────────────────
-            import urllib.parse as _up
             righe_wa = []
             for p in prodotti:
                 qtxt = "q.b." if p["qtot"] == 0 else f"{int(p['qtot'])}g"
@@ -2615,7 +2652,7 @@ def portale_paziente():
             msg_wa = (f"🛒 *Lista della spesa settimanale*\n\n" +
                       "\n".join(righe_wa) +
                       f"\n\n_Generata da NutriNext_")
-            wa_url = f"https://wa.me/?text={_up.quote(msg_wa)}"
+            wa_url = f"https://wa.me/?text={_url_quote(msg_wa)}"
 
             st.link_button("💚 Condividi lista su WhatsApp", wa_url, use_container_width=True,
                            help="Apre WhatsApp con tutta la lista pronta da inviare")
