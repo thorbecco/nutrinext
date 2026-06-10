@@ -8,3 +8,4 @@ Pillow>=10.0.0
 pyarrow>=14.0.0
 psycopg2-binary>=2.9.9
 python-dotenv>=1.0.0
+resend>=2.0.0

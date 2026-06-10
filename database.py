@@ -1103,8 +1103,8 @@ def delete_patient_admin(patient_id: int):
 # ==============================================================================
 
 def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
-    """Invia email via Resend. Richiede env: RESEND_API_KEY, RESEND_FROM (opzionale)."""
-    import urllib.request, urllib.error, json
+    """Invia email via Resend SDK. Richiede env: RESEND_API_KEY, RESEND_FROM (opzionale)."""
+    import resend
 
     api_key = os.environ.get("RESEND_API_KEY", "")
     from_   = os.environ.get("RESEND_FROM", "NutriNext <noreply@nutrinextpro.it>")
@@ -1112,29 +1112,16 @@ def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
     if not api_key:
         return False, "Servizio email non configurato (RESEND_API_KEY mancante)."
 
-    payload = json.dumps({
-        "from":    from_,
-        "to":      [to_email],
-        "subject": subject,
-        "text":    body,
-    }).encode("utf-8")
-
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type":  "application/json",
-        },
-        method="POST",
-    )
+    resend.api_key = api_key
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return True, "Email inviata."
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        return False, f"Errore Resend HTTP {e.code}: {err_body}"
+        resend.Emails.send({
+            "from":    from_,
+            "to":      [to_email],
+            "subject": subject,
+            "text":    body,
+        })
+        return True, "Email inviata."
     except Exception as e:
         return False, f"Errore invio email: {e}"
 
