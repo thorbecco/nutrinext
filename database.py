@@ -9,6 +9,7 @@ import sqlite3
 import hashlib
 import secrets
 import string
+import functools
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
@@ -560,28 +561,29 @@ def setup_superadmin(username, password, nome, cognome=""):
         )
 
 def login(username: str, password: str):
+    ph = _hash(password)
     with _conn() as cur:
-        cur.execute("SELECT * FROM users WHERE username=%s AND password_hash=%s",
-            (username, _hash(password)))
+        # Prova utente (nutrizionista/admin)
+        cur.execute("SELECT * FROM users WHERE username=%s AND password_hash=%s", (username, ph))
         row = _fetchone(cur)
         if row:
             if row.get("is_active", 1) == 0:
                 return {"_suspended": True}
-            # Aggiorna last_login
-            with _conn() as cur2:
-                cur2.execute("UPDATE users SET last_login=%s WHERE id=%s",
-                    (datetime.now().strftime("%Y-%m-%d %H:%M"), row["id"]))
+            # Aggiorna last_login nella stessa transazione
+            cur.execute("UPDATE users SET last_login=%s WHERE id=%s",
+                (datetime.now().strftime("%Y-%m-%d %H:%M"), row["id"]))
             return row
-    with _conn() as cur:
+        # Prova paziente
         cur.execute(
             """SELECT p.*, u.username as nut_username FROM patients p
                JOIN users u ON u.id=p.nutritionist_id
                WHERE p.username=%s AND p.password_hash=%s""",
-            (username, _hash(password))
+            (username, ph)
         )
         row = _fetchone(cur)
         return {"_patient": True, **row} if row else None
 
+@functools.lru_cache(maxsize=64)
 def get_nutritionist(nut_id: int) -> dict:
     with _conn() as cur:
         cur.execute("SELECT * FROM users WHERE id=%s", (nut_id,))
@@ -614,6 +616,7 @@ def get_patients(nutritionist_id: int) -> list:
             (nutritionist_id,))
         return _fetchall(cur)
 
+@functools.lru_cache(maxsize=128)
 def get_patient(patient_id: int) -> dict:
     with _conn() as cur:
         cur.execute("SELECT * FROM patients WHERE id=%s", (patient_id,))

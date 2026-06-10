@@ -161,27 +161,27 @@ DATABASE = load_database()
 # ==============================================================================
 # CACHED DB WRAPPERS  (evitano query ripetute ad ogni rerun)
 # ==============================================================================
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=60)
 def _cached_unread(patient_id: int, ruolo: str) -> int:
     return db.unread_count(patient_id, ruolo)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def _cached_appointments(nut_id: int):
     return db.get_appointments(nut_id)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def _cached_patients(nut_id: int):
     return db.get_patients(nut_id)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def _cached_active_plan(patient_id: int):
     return db.get_active_plan(patient_id)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def _cached_plan_items(plan_id: int):
     return db.get_plan_items(plan_id)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def _cached_latest_visit(patient_id: int):
     return db.get_latest_visit(patient_id)
 
