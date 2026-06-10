@@ -2522,7 +2522,7 @@ def portale_paziente():
     page = st.session_state.page
     plan     = _cached_active_plan(pid)
     # get_plan_items solo se serve davvero (piano e spesa)
-    items    = _cached_plan_items(plan["id"]) if plan and page in ("piano_p","spesa_p","home_p") else []
+    items    = _cached_plan_items(plan["id"]) if plan and page in ("piano_p","spesa_p","home_p","carrello_p") else []
     ultima_v = _cached_latest_visit(pid) if page in ("home_p","visita_p") else {}
 
     if page in ("home_p", None):
