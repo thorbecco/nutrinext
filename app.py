@@ -2254,10 +2254,13 @@ def page_piano():
                 # Notifica email al paziente
                 _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
                 if p.get("email"):
-                    db.send_notification_piano(
+                    ok, msg = db.send_notification_piano(
                         p["email"],
                         f"{p.get('nome','')} {p.get('cognome','')}".strip(),
                         nome_piano, _app_url)
+                    import logging; logging.warning(f"[EMAIL paziente piano] ok={ok} msg={msg} to={p['email']}")
+                else:
+                    import logging; logging.warning(f"[EMAIL paziente piano] SKIP — email paziente vuota: {p}")
                 st.success("Piano salvato e reso visibile al paziente.")
 
     with tab_pdf:
@@ -2391,10 +2394,13 @@ def page_messaggi_nut():
             # Notifica email al paziente
             _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
             if p.get("email"):
-                db.send_notification_messaggio_paziente(
+                ok, msg = db.send_notification_messaggio_paziente(
                     p["email"],
                     f"{p.get('nome','')} {p.get('cognome','')}".strip(),
                     _app_url)
+                import logging; logging.warning(f"[EMAIL paziente msg] ok={ok} msg={msg} to={p['email']}")
+            else:
+                import logging; logging.warning(f"[EMAIL paziente msg] SKIP — email paziente vuota: {p}")
             st.rerun()
 
 # ==============================================================================
