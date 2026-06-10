@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from fpdf import FPDF
-import json, math, os, io, base64, secrets, re
+import json, math, os, io, base64, secrets, re, logging
 from datetime import datetime, date, timedelta
 from urllib.parse import quote as _url_quote
 
@@ -2289,9 +2289,9 @@ def page_piano():
                         p["email"],
                         f"{p.get('nome','')} {p.get('cognome','')}".strip(),
                         nome_piano, _app_url)
-                    import logging; logging.warning(f"[EMAIL paziente piano] ok={ok} msg={msg} to={p['email']}")
+                    logging.warning(f"[EMAIL paziente piano] ok={ok} msg={msg} to={p['email']}")
                 else:
-                    import logging; logging.warning(f"[EMAIL paziente piano] SKIP — email paziente vuota: {p}")
+                    logging.warning(f"[EMAIL paziente piano] SKIP — email paziente vuota: {p}")
                 st.success("Piano salvato e reso visibile al paziente.")
 
     with tab_pdf:
@@ -2429,9 +2429,9 @@ def page_messaggi_nut():
                     p["email"],
                     f"{p.get('nome','')} {p.get('cognome','')}".strip(),
                     _app_url)
-                import logging; logging.warning(f"[EMAIL paziente msg] ok={ok} msg={msg} to={p['email']}")
+                logging.warning(f"[EMAIL paziente msg] ok={ok} msg={msg} to={p['email']}")
             else:
-                import logging; logging.warning(f"[EMAIL paziente msg] SKIP — email paziente vuota: {p}")
+                logging.warning(f"[EMAIL paziente msg] SKIP — email paziente vuota: {p}")
             st.rerun()
 
 # ==============================================================================
@@ -2778,9 +2778,9 @@ def portale_paziente():
                         nut.get("nome", ""),
                         f"{p_obj.get('nome','')} {p_obj.get('cognome','')}".strip(),
                         _app_url)
-                    import logging; logging.warning(f"[EMAIL nutrizionista] ok={ok} msg={msg} to={nut['email_studio']}")
+                    logging.warning(f"[EMAIL nutrizionista] ok={ok} msg={msg} to={nut['email_studio']}")
                 else:
-                    import logging; logging.warning(f"[EMAIL nutrizionista] SKIP — nut={nut} email_studio={nut.get('email_studio') if nut else 'N/A'}")
+                    logging.warning(f"[EMAIL nutrizionista] SKIP — nut={nut} email_studio={nut.get('email_studio') if nut else 'N/A'}")
                 st.rerun()
 
     elif page == "profilo_p":

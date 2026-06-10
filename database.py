@@ -5,13 +5,15 @@ Configura DATABASE_URL come variabile d'ambiente per usare PostgreSQL.
 """
 
 import os
+import sys
 import sqlite3
 import hashlib
 import secrets
 import string
 import functools
+import json
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 # ── Carica .env se presente ───────────────────────────────────────────────────
 try:
@@ -271,6 +273,20 @@ def _pg_init(cur):
     ]
     for stmt in stmts:
         cur.execute(stmt)
+    # Indici per velocizzare le query più frequenti
+    _idx = [
+        "CREATE INDEX IF NOT EXISTS idx_patients_nut   ON patients(nutritionist_id)",
+        "CREATE INDEX IF NOT EXISTS idx_diet_plans_pat ON diet_plans(patient_id, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_diet_items_plan ON diet_items(plan_id)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_pat   ON messages(patient_id, letto)",
+        "CREATE INDEX IF NOT EXISTS idx_visits_pat     ON visits(patient_id, data DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_appts_nut      ON appointments(nutritionist_id, data_ora)",
+    ]
+    for idx in _idx:
+        try:
+            cur.execute(idx)
+        except Exception:
+            pass
 
 
 def _sqlite_init(cur):
@@ -436,6 +452,20 @@ def _sqlite_init(cur):
             cur._cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
         except Exception:
             pass
+    # Indici SQLite
+    _idx = [
+        "CREATE INDEX IF NOT EXISTS idx_patients_nut    ON patients(nutritionist_id)",
+        "CREATE INDEX IF NOT EXISTS idx_diet_plans_pat  ON diet_plans(patient_id, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_diet_items_plan ON diet_items(plan_id)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_pat    ON messages(patient_id, letto)",
+        "CREATE INDEX IF NOT EXISTS idx_visits_pat      ON visits(patient_id, data)",
+        "CREATE INDEX IF NOT EXISTS idx_appts_nut       ON appointments(nutritionist_id, data_ora)",
+    ]
+    for idx in _idx:
+        try:
+            cur._cur.execute(idx)
+        except Exception:
+            pass
 
 
 def _pg_migrate(cur):
@@ -459,23 +489,27 @@ def _pg_migrate(cur):
         except Exception as _e:
             cur._cur.execute("ROLLBACK TO SAVEPOINT _mig")
             if "already exists" not in str(_e).lower() and "duplicate" not in str(_e).lower():
-                import sys
                 print(f"[migrate] {table}.{col}: {_e}", file=sys.stderr)
 
 
+_db_initialized = False
+
 def init_db():
+    global _db_initialized
+    if _db_initialized:
+        return
     with _conn() as cur:
         if USE_POSTGRES:
             _pg_init(cur)
             _pg_migrate(cur)
         else:
             _sqlite_init(cur)
+    _db_initialized = True
 
 
 def _normalize(d: dict) -> dict:
     """Convert datetime/date values to ISO strings for uniform handling."""
-    from datetime import datetime as _dt, date as _date
-    return {k: (v.isoformat() if isinstance(v, (_dt, _date)) else v) for k, v in d.items()}
+    return {k: (v.isoformat() if isinstance(v, (datetime, date)) else v) for k, v in d.items()}
 
 
 def _fetchall(cur) -> list:
@@ -722,14 +756,17 @@ def save_visit(patient_id, data, peso, altezza, eta, sesso, R, Xc,
              pliche.get("addominale",0),pliche.get("coscia",0),pliche.get("ascellare",0),note))
         return cur.lastrowid
 
-def get_visits(patient_id: int) -> list:
+def get_visits(patient_id: int, limit: int = 50) -> list:
     with _conn() as cur:
-        cur.execute("SELECT * FROM visits WHERE patient_id=%s ORDER BY data DESC", (patient_id,))
+        cur.execute("SELECT * FROM visits WHERE patient_id=%s ORDER BY data DESC LIMIT %s",
+                    (patient_id, limit))
         return _fetchall(cur)
 
 def get_latest_visit(patient_id: int) -> dict:
-    visits = get_visits(patient_id)
-    return visits[0] if visits else {}
+    with _conn() as cur:
+        cur.execute("SELECT * FROM visits WHERE patient_id=%s ORDER BY data DESC LIMIT 1",
+                    (patient_id,))
+        return _fetchone(cur)
 
 
 # ==============================================================================
@@ -757,12 +794,11 @@ def save_plan(patient_id, items: list, note="", nome="Piano attivo",
             (patient_id, visit_id, nome, note, freq_proteiche))
         plan_id = cur.lastrowid
         for item in items:
-            import json as _json
             comp = item.get("_componenti")
             comp_json = None
             if comp:
                 try:
-                    comp_json = _json.dumps(comp, ensure_ascii=False, default=str)
+                    comp_json = json.dumps(comp, ensure_ascii=False, default=str)
                 except (TypeError, ValueError):
                     comp_json = None
             cur.execute(
@@ -776,10 +812,13 @@ def save_plan(patient_id, items: list, note="", nome="Piano attivo",
 # MESSAGES
 # ==============================================================================
 
-def get_messages(patient_id: int) -> list:
+def get_messages(patient_id: int, limit: int = 100) -> list:
     with _conn() as cur:
-        cur.execute("SELECT * FROM messages WHERE patient_id=%s ORDER BY timestamp", (patient_id,))
-        return _fetchall(cur)
+        cur.execute(
+            "SELECT * FROM messages WHERE patient_id=%s ORDER BY timestamp DESC LIMIT %s",
+            (patient_id, limit))
+        rows = _fetchall(cur)
+        return list(reversed(rows))
 
 def send_message(patient_id: int, ruolo: str, testo: str):
     with _conn() as cur:
