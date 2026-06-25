@@ -30,14 +30,26 @@ DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nutrigen.db"
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.pool
+    import psycopg2.extras
     _pg_pool = None
+
+def _make_pool():
+    """Crea un nuovo pool con keepalive TCP per evitare connection timeout su Railway."""
+    return psycopg2.pool.ThreadedConnectionPool(
+        1, 10, DATABASE_URL,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+        connect_timeout=10,
+    )
 
 def _get_pg_pool():
     global _pg_pool
     if not USE_POSTGRES:
         return None
     if _pg_pool is None:
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, DATABASE_URL)
+        _pg_pool = _make_pool()
     return _pg_pool
 
 
@@ -84,18 +96,38 @@ class _Cursor:
 @contextmanager
 def _conn():
     if USE_POSTGRES:
-        con = _get_pg_pool().getconn()
+        global _pg_pool
+        pool = _get_pg_pool()
+        con = pool.getconn()
+        # Se la connessione è morta (idle timeout Railway), ricreala
+        if con.closed:
+            pool.putconn(con)
+            _pg_pool = _make_pool()
+            pool = _pg_pool
+            con = pool.getconn()
         con.autocommit = False
         try:
             cur = con.cursor()
             yield _Cursor(cur, con, True)
             con.commit()
+        except psycopg2.OperationalError:
+            # Connessione interrotta — ricrea il pool e riprova
+            try: con.rollback()
+            except Exception: pass
+            try: pool.putconn(con, close=True)
+            except Exception: pass
+            _pg_pool = _make_pool()
+            raise
         except Exception:
-            con.rollback()
+            try: con.rollback()
+            except Exception: pass
             raise
         finally:
-            cur.close()
-            _get_pg_pool().putconn(con)
+            try:
+                cur.close()
+                pool.putconn(con)
+            except Exception:
+                pass
     else:
         con = sqlite3.connect(DB_FILE, check_same_thread=False)
         con.row_factory = sqlite3.Row
