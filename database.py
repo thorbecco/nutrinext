@@ -34,15 +34,8 @@ if USE_POSTGRES:
     _pg_pool = None
 
 def _make_pool():
-    """Crea un nuovo pool con keepalive TCP per evitare connection timeout su Railway."""
-    return psycopg2.pool.ThreadedConnectionPool(
-        1, 10, DATABASE_URL,
-        keepalives=1,
-        keepalives_idle=30,
-        keepalives_interval=10,
-        keepalives_count=5,
-        connect_timeout=10,
-    )
+    """Crea un nuovo pool PostgreSQL compatibile con Supabase PgBouncer."""
+    return psycopg2.pool.ThreadedConnectionPool(1, 10, DATABASE_URL)
 
 def _get_pg_pool():
     global _pg_pool
