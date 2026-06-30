@@ -1580,13 +1580,9 @@ def page_registrazione_nutrizionista():
                 # Notifica all'admin
                 _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
                 admin_email = os.environ.get("ADMIN_EMAIL", "")
-                logging.warning(f"[EMAIL admin] ADMIN_EMAIL={admin_email!r}")
                 if admin_email:
-                    ok_mail, msg_mail = db.send_notification_nuova_richiesta_nutrizionista(
+                    db.send_notification_nuova_richiesta_nutrizionista(
                         admin_email, nome, cognome, email_s, username, _app_url)
-                    logging.warning(f"[EMAIL admin] ok={ok_mail} msg={msg_mail} to={admin_email}")
-                else:
-                    logging.warning("[EMAIL admin] SKIP — ADMIN_EMAIL non impostato")
             else:
                 st.error(msg)
 
