@@ -1299,6 +1299,39 @@ Il sistema NutriNext
     return _send_email(to_admin_email, "NutriNext — Nuova richiesta nutrizionista", body)
 
 
+def send_notification_approvazione_paziente(to_email: str, nome: str,
+                                             username: str,
+                                             app_url: str = "") -> tuple[bool, str]:
+    """Notifica al paziente: richiesta approvata, può accedere."""
+    body = f"""Ciao {nome},
+
+la tua richiesta di accesso a NutriNext è stata approvata dal tuo nutrizionista!
+
+Puoi accedere con le credenziali che hai scelto durante la registrazione:
+  Username: {username}
+
+{"Accedi all'app qui: " + app_url if app_url else "Accedi all'app NutriNext."}
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Il tuo account è stato approvato!", body)
+
+
+def send_notification_rifiuto_paziente(to_email: str, nome: str) -> tuple[bool, str]:
+    """Notifica al paziente: richiesta rifiutata."""
+    body = f"""Ciao {nome},
+
+la tua richiesta di accesso a NutriNext è stata esaminata ma non è stata approvata.
+
+Per ulteriori informazioni contatta direttamente il tuo nutrizionista.
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Richiesta di accesso non approvata", body)
+
+
 def send_notification_rifiuto_nutrizionista(to_email: str, nome: str,
                                              motivo: str = "") -> tuple[bool, str]:
     """Notifica al nutrizionista: richiesta rifiutata."""

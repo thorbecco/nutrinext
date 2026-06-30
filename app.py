@@ -3028,9 +3028,17 @@ def page_inviti():
             if c2.button("✅ Approva", key=f"appr_{req['id']}", type="primary"):
                 db.approve_request(req["id"])
                 st.success(f"{req['nome']} approvato!")
+                if req.get("email"):
+                    _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+                    db.send_notification_approvazione_paziente(
+                        req["email"], req.get("nome", ""),
+                        req.get("username", ""), _app_url)
                 st.rerun()
             if c3.button("❌ Rifiuta", key=f"rif_{req['id']}"):
                 db.reject_request(req["id"])
+                if req.get("email"):
+                    db.send_notification_rifiuto_paziente(
+                        req["email"], req.get("nome", ""))
                 st.rerun()
 
 
