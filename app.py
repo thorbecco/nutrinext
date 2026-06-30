@@ -1577,6 +1577,12 @@ def page_registrazione_nutrizionista():
                 st.success(f"✅ {msg}")
                 st.balloons()
                 st.info("Puoi chiudere questa pagina. Ti contatteremo via email.")
+                # Notifica all'admin
+                _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+                admin_email = os.environ.get("ADMIN_EMAIL", "")
+                if admin_email:
+                    db.send_notification_nuova_richiesta_nutrizionista(
+                        admin_email, nome, cognome, email_s, username, _app_url)
             else:
                 st.error(msg)
 
@@ -3257,6 +3263,14 @@ def page_admin_richieste_nut():
                 if c2.button("✅ Approva", key=f"appr_nut_{req['id']}", type="primary", use_container_width=True):
                     db.approve_nutritionist_request(req["id"])
                     st.success(f"✅ {req.get('nome','')} approvato! Account creato.")
+                    # Notifica al nutrizionista
+                    _app_url = os.environ.get("APP_URL", "https://www.nutrinextpro.it")
+                    if req.get("email_studio"):
+                        db.send_notification_approvazione_nutrizionista(
+                            req["email_studio"],
+                            req.get("nome", ""),
+                            req.get("username", ""),
+                            _app_url)
                     st.rerun()
                 if c3.button("❌ Rifiuta", key=f"rif_nut_{req['id']}", use_container_width=True):
                     db.reject_nutritionist_request(req["id"], motivo)

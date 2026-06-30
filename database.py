@@ -1275,3 +1275,46 @@ Cordiali saluti,
 Il team NutriNext
 """
     return _send_email(to_email, f"NutriNext — Messaggio da {nome_paziente}", body)
+
+
+def send_notification_nuova_richiesta_nutrizionista(to_admin_email: str,
+                                                     nome: str, cognome: str,
+                                                     email_nut: str, username: str,
+                                                     app_url: str = "") -> tuple[bool, str]:
+    """Notifica all'admin: nuovo nutrizionista ha inviato richiesta di registrazione."""
+    body = f"""Ciao,
+
+un nuovo nutrizionista ha inviato una richiesta di registrazione su NutriNext.
+
+Dati richiesta:
+  Nome:      {nome} {cognome}
+  Email:     {email_nut}
+  Username:  {username}
+
+{"Accedi al pannello admin per approvare o rifiutare: " + app_url if app_url else "Accedi al pannello admin per approvare o rifiutare la richiesta."}
+
+Cordiali saluti,
+Il sistema NutriNext
+"""
+    return _send_email(to_admin_email, "NutriNext — Nuova richiesta nutrizionista", body)
+
+
+def send_notification_approvazione_nutrizionista(to_email: str, nome: str,
+                                                  username: str,
+                                                  app_url: str = "") -> tuple[bool, str]:
+    """Notifica al nutrizionista: richiesta approvata, account attivo."""
+    body = f"""Ciao {nome},
+
+la tua richiesta di registrazione a NutriNext è stata approvata!
+
+Puoi accedere con le credenziali che hai scelto durante la registrazione:
+  Username: {username}
+
+{"Accedi all'app qui: " + app_url if app_url else "Accedi all'app NutriNext."}
+
+Benvenuto/a nel team!
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Il tuo account è stato approvato!", body)
