@@ -1374,7 +1374,7 @@ def page_setup():
         pw       = st.text_input("Password *", type="password")
         pw2      = st.text_input("Conferma password *", type="password")
 
-        if st.button("Crea account", type="primary", use_container_width=True):
+        if st.button("Crea account", type="primary", width="stretch"):
             if not all([nome, username, pw]):
                 st.error("Compila tutti i campi obbligatori (*).")
             elif pw != pw2:
@@ -1431,7 +1431,7 @@ def page_profilo():
 
     # ── Salva tutto insieme ──────────────────────────────────────────────────
     st.divider()
-    if st.button("💾 Salva profilo", type="primary", use_container_width=True):
+    if st.button("💾 Salva profilo", type="primary", width="stretch"):
         new_logo_path = logo_path  # mantieni quello attuale se non caricato nulla
         if logo_file:
             new_logo_path = _salva_logo(logo_file, user["id"])
@@ -1499,14 +1499,14 @@ def page_login():
     st.markdown("<br><br>", unsafe_allow_html=True)
     c = st.columns([1,1.2,1])[1]
     with c:
-        st.image(_img("logos/logo_login.png"), use_container_width=True)
+        st.image(_img("logos/logo_login.png"), width="stretch")
         st.markdown("""
         <div style='text-align:center;margin-bottom:20px'>
           <p style='color:#666;margin-top:4px'>Software per nutrizionisti</p>
         </div>""", unsafe_allow_html=True)
         username = st.text_input("Username", placeholder="Inserisci username")
         password = st.text_input("Password", type="password", placeholder="Inserisci password")
-        if st.button("Accedi", type="primary", use_container_width=True):
+        if st.button("Accedi", type="primary", width="stretch"):
             user = db.login(username, password)
             if user and user.get("_suspended"):
                 st.error("⛔ Account sospeso. Contatta l'amministratore NutriNext.")
@@ -1524,7 +1524,7 @@ def page_login():
         st.divider()
         st.markdown("<div style='text-align:center;color:#888;font-size:0.9em'>Sei un nutrizionista?</div>",
                     unsafe_allow_html=True)
-        if st.button("📋 Registrati come Nutrizionista", use_container_width=True):
+        if st.button("📋 Registrati come Nutrizionista", width="stretch"):
             st.session_state["show_register_nut"] = True
             st.rerun()
 
@@ -1533,7 +1533,7 @@ def page_registrazione_nutrizionista():
     """Pagina pubblica di registrazione per nutrizionisti."""
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
-        st.image(_img("logos/logo_login.png"), use_container_width=True)
+        st.image(_img("logos/logo_login.png"), width="stretch")
     st.markdown("""
     <div style='text-align:center;padding:6px 0 16px'>
       <p style='color:#666;font-size:1.1em'>Registrazione Nutrizionista</p>
@@ -1559,7 +1559,7 @@ def page_registrazione_nutrizionista():
         pw1      = u2.text_input("Password *", type="password")
         pw2      = u3.text_input("Conferma password *", type="password")
 
-        submitted = st.form_submit_button("📨 Invia richiesta", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("📨 Invia richiesta", type="primary", width="stretch")
 
     if submitted:
         if not all([nome, email_s, username, pw1]):
@@ -1623,7 +1623,7 @@ def sidebar_nutrizionista():
     }
     for key, label in nav.items():
         active = st.session_state.page == key
-        if st.sidebar.button(label, use_container_width=True,
+        if st.sidebar.button(label, width="stretch",
                              type="primary" if active else "secondary"):
             st.session_state.page = key
             st.session_state.sel_patient_id = None
@@ -1639,13 +1639,13 @@ def sidebar_nutrizionista():
             if key == "messaggi":
                 n = _cached_unread(st.session_state.sel_patient_id, "Nutrizionista")
                 if n: badge = f" 🔴{n}"
-            if st.sidebar.button(label+badge, use_container_width=True,
+            if st.sidebar.button(label+badge, width="stretch",
                                 type="primary" if st.session_state.page==key else "secondary"):
                 st.session_state.page = key
                 st.rerun()
 
     st.sidebar.divider()
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+    if st.sidebar.button("🚪 Logout", width="stretch"):
         for k in ["user","patient_obj","page","sel_patient_id","piano_corrente","note_piano","edit_appt_id"]:
             st.session_state[k] = None if k in ["user","patient_obj","sel_patient_id","edit_appt_id"] else ([] if k=="piano_corrente" else ("" if k=="note_piano" else "dashboard"))
         st.rerun()
@@ -1698,7 +1698,7 @@ def page_dashboard():
         st.subheader("👥 Ultimi pazienti")
         for p in pazienti[:8]:
             if st.button(f"**{p['cognome']} {p['nome']}**  —  {p.get('email','')}",
-                        key=f"dash_p_{p['id']}", use_container_width=True):
+                        key=f"dash_p_{p['id']}", width="stretch"):
                 st.session_state.sel_patient_id = p["id"]
                 st.session_state.page = "visita"
                 st.rerun()
@@ -1797,7 +1797,7 @@ def page_agenda():
         note_a = st.text_input("Note", value=appt_edit.get("note",""))
 
         ba, bb = st.columns(2)
-        if ba.button("💾 Salva appuntamento", type="primary", use_container_width=True):
+        if ba.button("💾 Salva appuntamento", type="primary", width="stretch"):
             patient_id   = paz_map.get(paz_sel)
             patient_name = paz_sel if paz_sel!=paz_nomi[0] else paz_nome_ext
             data_ora_str = f"{data_appt} {ora_appt.strftime('%H:%M')}"
@@ -1811,7 +1811,7 @@ def page_agenda():
                 st.error(f"Errore salvataggio appuntamento: {e}")
             else:
                 st.rerun()
-        if edit_id and bb.button("🗑️ Elimina", type="secondary", use_container_width=True):
+        if edit_id and bb.button("🗑️ Elimina", type="secondary", width="stretch"):
             try:
                 db.delete_appointment(edit_id)
                 _invalidate_nut_cache(user["id"])
@@ -1948,7 +1948,7 @@ def page_visita():
         tc1.metric("BMR", f"{bmr} kcal/g"); tc2.metric("TDEE", f"{tdee} kcal/g")
 
         st.markdown(render_bia_table(bia, peso, sesso_p, bmr=bmr), unsafe_allow_html=True)
-        st.plotly_chart(plot_biavector(R_v, Xc_v, altezza), use_container_width=True)
+        st.plotly_chart(plot_biavector(R_v, Xc_v, altezza), width="stretch")
 
         st.divider()
         usa_pliche = st.checkbox("📏 Aggiungi dati plicometrici (opzionale)")
@@ -1967,7 +1967,7 @@ def page_visita():
             }
         note_v = st.text_area("Note visita", height=100)
 
-        if st.button("💾 SALVA VISITA", type="primary", use_container_width=True):
+        if st.button("💾 SALVA VISITA", type="primary", width="stretch"):
             db.save_visit(pid, str(data_v), peso, altezza, eta_paz, sesso_p,
                           R_v, Xc_v, bia, bmr, pliche, note_v)
             _invalidate_patient_cache(pid)
@@ -2219,7 +2219,7 @@ def page_piano():
                 df_edit = df_edit.reset_index(drop=True)
 
         edited = st.data_editor(
-            df_edit, num_rows="dynamic", use_container_width=True,
+            df_edit, num_rows="dynamic", width="stretch",
             column_config={
                 "Giorno": st.column_config.SelectboxColumn("Giorno", options=lista_giorni),
                 "Pasto":  st.column_config.SelectboxColumn("Pasto",  options=["Colazione","Spuntino Mattina","Pranzo","Merenda","Cena","Pre-Nanna"]),
@@ -2271,16 +2271,16 @@ def page_piano():
                        "note": st.session_state.note_piano}
             ex1, ex2, ex3 = st.columns(3)
             ex1.download_button("📥 PDF Dieta", data=pdf_d,
-                file_name=f"dieta_{p.get('cognome','')}.pdf", use_container_width=True)
+                file_name=f"dieta_{p.get('cognome','')}.pdf", width="stretch")
             ex2.download_button("🛒 PDF Lista Spesa", data=pdf_s,
-                file_name=f"spesa_{p.get('cognome','')}.pdf", use_container_width=True)
+                file_name=f"spesa_{p.get('cognome','')}.pdf", width="stretch")
             ex3.download_button("📋 Export JSON", data=json.dumps(payload, ensure_ascii=False, indent=2),
-                file_name="dieta.json", mime="application/json", use_container_width=True)
+                file_name="dieta.json", mime="application/json", width="stretch")
 
         st.divider()
         sn1, sn2 = st.columns(2)
         nome_piano = sn1.text_input("Nome piano (es. Fase 1 - Dimagrimento)", value="Piano attivo")
-        if sn2.button("💾 SALVA E INVIA PIANO", type="primary", use_container_width=True):
+        if sn2.button("💾 SALVA E INVIA PIANO", type="primary", width="stretch"):
             if not st.session_state.piano_corrente:
                 st.error("Il piano è vuoto.")
             else:
@@ -2376,7 +2376,7 @@ def page_piano():
                 st.markdown("**3️⃣ Verifica e correggi**")
                 df_preview = pd.DataFrame(estratti)
                 df_editato = st.data_editor(
-                    df_preview, num_rows="dynamic", use_container_width=True,
+                    df_preview, num_rows="dynamic", width="stretch",
                     column_config={
                         "Giorno":   st.column_config.SelectboxColumn("Giorno",   options=lista_giorni_pdf),
                         "Pasto":    st.column_config.SelectboxColumn("Pasto",    options=lista_pasti_pdf),
@@ -2388,11 +2388,11 @@ def page_piano():
                 st.markdown("**4️⃣ Importa nel piano**")
                 col_imp, col_agg = st.columns(2)
                 if col_imp.button("🔄 Sostituisci piano con questi alimenti", type="primary",
-                                  use_container_width=True):
+                                  width="stretch"):
                     st.session_state.piano_corrente = df_editato.to_dict("records")
                     st.success("Piano sostituito con gli alimenti dal PDF.")
                     st.rerun()
-                if col_agg.button("➕ Aggiungi al piano esistente", use_container_width=True):
+                if col_agg.button("➕ Aggiungi al piano esistente", width="stretch"):
                     st.session_state.piano_corrente.extend(df_editato.to_dict("records"))
                     st.success(f"Aggiunti {len(df_editato)} alimenti al piano.")
                     st.rerun()
@@ -2518,11 +2518,11 @@ def portale_paziente():
         if key == "msg_p":
             n = _cached_unread(pid, "Paziente")
             if n: badge = f" 🔴{n}"
-        if st.sidebar.button(label+badge, use_container_width=True,
+        if st.sidebar.button(label+badge, width="stretch",
                             type="primary" if st.session_state.page==key else "secondary"):
             st.session_state.page = key; st.rerun()
     st.sidebar.divider()
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+    if st.sidebar.button("🚪 Logout", width="stretch"):
         st.session_state.user = None; st.session_state.page = "home_p"; st.rerun()
 
     page = st.session_state.page
@@ -2560,7 +2560,7 @@ def portale_paziente():
                 paziente=p_obj, nutrizionista=nut_paz, visita=vis_paz,
                 freq_proteiche=freq_prot)
             st.download_button("📥 Scarica PDF piano alimentare", data=pdf_d,
-                               file_name="piano_alimentare.pdf", use_container_width=True,
+                               file_name="piano_alimentare.pdf", width="stretch",
                                type="primary")
             st.divider()
             if plan.get("note"):
@@ -2591,7 +2591,7 @@ def portale_paziente():
             nut_paz = db.get_nutritionist(p_obj.get("nutritionist_id", 0))
             pdf_s = genera_pdf_spesa(items, paziente=p_obj, nutrizionista=nut_paz, visita=vis_paz)
             st.download_button("📥 Scarica Lista Spesa PDF", data=pdf_s,
-                               file_name="lista_spesa.pdf", use_container_width=True,
+                               file_name="lista_spesa.pdf", width="stretch",
                                type="primary")
             st.divider()
             agg = {}
@@ -2660,7 +2660,7 @@ def portale_paziente():
                       f"\n\n_Generata da NutriNext_")
             wa_url = f"https://wa.me/?text={_url_quote(msg_wa)}"
 
-            st.link_button("💚 Condividi lista su WhatsApp", wa_url, use_container_width=True,
+            st.link_button("💚 Condividi lista su WhatsApp", wa_url, width="stretch",
                            help="Apre WhatsApp con tutta la lista pronta da inviare")
 
             st.divider()
@@ -2676,7 +2676,7 @@ def portale_paziente():
 
                 if idx >= tot_prodotti:
                     st.success(f"✅ Spesa completata! Hai cercato tutti i {tot_prodotti} prodotti.")
-                    if st.button("🔄 Ricomincia", use_container_width=True):
+                    if st.button("🔄 Ricomincia", width="stretch"):
                         st.session_state.wizard_idx = 0
                         st.session_state.wizard_trovati = set()
                         st.rerun()
@@ -2703,19 +2703,19 @@ def portale_paziente():
                     url = url_supermercato(sup_sel, p["nome"], p["marca"])
                     st.link_button(
                         f"{sup_conf['emoji']} Cerca su {sup_sel} →",
-                        url, use_container_width=True, type="primary"
+                        url, width="stretch", type="primary"
                     )
 
                     st.markdown("<br>", unsafe_allow_html=True)
                     c1, c2, c3 = st.columns(3)
-                    if c1.button("✅ Trovato, prossimo →", use_container_width=True, type="primary"):
+                    if c1.button("✅ Trovato, prossimo →", width="stretch", type="primary"):
                         st.session_state.wizard_trovati.add(p["nome"])
                         st.session_state.wizard_idx += 1
                         st.rerun()
-                    if c2.button("⏭️ Salta", use_container_width=True):
+                    if c2.button("⏭️ Salta", width="stretch"):
                         st.session_state.wizard_idx += 1
                         st.rerun()
-                    if c3.button("⬅️ Torna indietro", use_container_width=True):
+                    if c3.button("⬅️ Torna indietro", width="stretch"):
                         st.session_state.wizard_idx = max(0, idx - 1)
                         st.rerun()
 
@@ -2735,7 +2735,7 @@ def portale_paziente():
                     col_info, col_btn = st.columns([3, 1])
                     col_info.markdown(f"**{nome}**  \n`{qtxt}`" +
                                       (f"  ·  EAN `{p['barcode']}`" if p["barcode"] else ""))
-                    col_btn.link_button("Cerca →", url, use_container_width=True)
+                    col_btn.link_button("Cerca →", url, width="stretch")
 
                 if con_marca:
                     st.subheader(f"🏷️ Con marca  ({len(con_marca)})")
@@ -2761,7 +2761,7 @@ def portale_paziente():
                     ultima_v.get("sesso","M"), bmr=ultima_v.get("BMR")), unsafe_allow_html=True)
                 if ultima_v.get("R") and ultima_v.get("Xc"):
                     st.plotly_chart(plot_biavector(ultima_v["R"],ultima_v["Xc"],ultima_v["altezza"]),
-                        use_container_width=True)
+                        width="stretch")
 
     elif page == "msg_p":
         st.title("💬 Messaggi")
@@ -2805,7 +2805,7 @@ def portale_paziente():
         np2 = st.text_input("Conferma nuova password", type="password", key="paz_np2")
 
         st.divider()
-        if st.button("💾 Salva", type="primary", use_container_width=True):
+        if st.button("💾 Salva", type="primary", width="stretch"):
             if not email_val.strip():
                 st.error("L'email è obbligatoria.")
             elif np1 and np1 != np2:
@@ -2855,7 +2855,7 @@ def _form_registrazione(nutritionist_id: int, token: str = ""):
     pw1      = u2.text_input("Password *", type="password")
     pw2      = u3.text_input("Conferma password *", type="password")
 
-    if st.button("✅ Registrati", type="primary", use_container_width=True):
+    if st.button("✅ Registrati", type="primary", width="stretch"):
         if not all([nome, username, pw1]):
             st.error("Compila tutti i campi obbligatori (*).")
         elif " " in username:
@@ -2882,7 +2882,7 @@ def page_registrazione():
 
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
-        st.image(_img("logos/logo_login.png"), use_container_width=True)
+        st.image(_img("logos/logo_login.png"), width="stretch")
     st.markdown("""
     <div style='text-align:center;padding:6px 0 16px'>
       <p style='color:#666;font-size:1.1em'>Registrazione Paziente</p>
@@ -2913,7 +2913,7 @@ def page_registrazione():
     col1, col2 = st.columns([2, 1])
     codice = col1.text_input("Codice studio", placeholder="Es. AB12CD",
                               max_chars=6).upper().strip()
-    if col2.button("Cerca", type="primary", use_container_width=True):
+    if col2.button("Cerca", type="primary", width="stretch"):
         if codice:
             st.session_state["reg_nut_code"] = codice
 
@@ -3001,7 +3001,7 @@ def page_inviti():
     col_d, col_btn = st.columns([1, 1])
     days = col_d.selectbox("Validità", [1, 3, 7, 14, 30], index=2,
                             format_func=lambda d: f"{d} giorno{'i' if d>1 else ''}")
-    if col_btn.button("🔗 Genera link", type="primary", use_container_width=True):
+    if col_btn.button("🔗 Genera link", type="primary", width="stretch"):
         token = db.create_invite_token(user["id"], days_valid=days)
         st.session_state["last_token"] = token
 
@@ -3071,7 +3071,7 @@ def page_admin_setup():
         uname   = st.text_input("Username admin")
         pw      = st.text_input("Password", type="password")
         pw2     = st.text_input("Conferma password", type="password")
-        if st.button("Crea account admin", type="primary", use_container_width=True):
+        if st.button("Crea account admin", type="primary", width="stretch"):
             if not all([nome, uname, pw]):
                 st.error("Compila tutti i campi.")
             elif pw != pw2:
@@ -3101,12 +3101,12 @@ def sidebar_admin():
     }
     for key, label in nav.items():
         active = st.session_state.page == key
-        if st.sidebar.button(label, use_container_width=True,
+        if st.sidebar.button(label, width="stretch",
                              type="primary" if active else "secondary"):
             st.session_state.page = key
             st.rerun()
     st.sidebar.divider()
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+    if st.sidebar.button("🚪 Logout", width="stretch"):
         st.session_state.user = None
         st.session_state.page = "admin_overview"
         st.rerun()
@@ -3172,16 +3172,16 @@ def page_admin_nutrizionisti():
             st.divider()
             ba, bb, bc = st.columns(3)
             if is_active:
-                if ba.button("⛔ Sospendi", key=f"sosp_{n['id']}", use_container_width=True):
+                if ba.button("⛔ Sospendi", key=f"sosp_{n['id']}", width="stretch"):
                     db.set_nutritionist_active(n["id"], False)
                     st.success("Nutrizionista sospeso."); st.rerun()
             else:
-                if ba.button("✅ Riattiva", key=f"riatt_{n['id']}", use_container_width=True, type="primary"):
+                if ba.button("✅ Riattiva", key=f"riatt_{n['id']}", width="stretch", type="primary"):
                     db.set_nutritionist_active(n["id"], True)
                     st.success("Nutrizionista riattivato."); st.rerun()
             # Eliminazione con doppia conferma
             if not st.session_state.get(f"confirm_del_nut_{n['id']}"):
-                if bb.button("🗑️ Elimina", key=f"del_nut_{n['id']}", use_container_width=True):
+                if bb.button("🗑️ Elimina", key=f"del_nut_{n['id']}", width="stretch"):
                     st.session_state[f"confirm_del_nut_{n['id']}"] = True; st.rerun()
             else:
                 bb.warning(f"Eliminare **{n.get('nome','')}** e tutti i suoi dati?")
@@ -3260,7 +3260,7 @@ def page_admin_richieste_nut():
 
                 c1, c2, c3 = st.columns([2, 1, 1])
                 motivo = c1.text_input("Motivo rifiuto (opzionale)", key=f"note_nut_{req['id']}")
-                if c2.button("✅ Approva", key=f"appr_nut_{req['id']}", type="primary", use_container_width=True):
+                if c2.button("✅ Approva", key=f"appr_nut_{req['id']}", type="primary", width="stretch"):
                     db.approve_nutritionist_request(req["id"])
                     st.success(f"✅ {req.get('nome','')} approvato! Account creato.")
                     # Notifica al nutrizionista
@@ -3272,7 +3272,7 @@ def page_admin_richieste_nut():
                             req.get("username", ""),
                             _app_url)
                     st.rerun()
-                if c3.button("❌ Rifiuta", key=f"rif_nut_{req['id']}", use_container_width=True):
+                if c3.button("❌ Rifiuta", key=f"rif_nut_{req['id']}", width="stretch"):
                     db.reject_nutritionist_request(req["id"], motivo)
                     st.warning("Richiesta rifiutata.")
                     st.rerun()
@@ -3334,7 +3334,7 @@ def page_admin_bugs():
                 key=f"stato_{b['id']}")
             nota = col_n.text_input("Nota per il nutrizionista", value=b.get("admin_note",""),
                 key=f"nota_{b['id']}")
-            if col_btn.button("💾 Aggiorna", key=f"upd_{b['id']}", type="primary", use_container_width=True):
+            if col_btn.button("💾 Aggiorna", key=f"upd_{b['id']}", type="primary", width="stretch"):
                 db.update_bug(b["id"], nuovo_stato, nota)
                 st.success("Aggiornato.")
                 st.rerun()
@@ -3365,7 +3365,7 @@ elif _show_register or "token" in params or "studio" in params:
 elif st.session_state.user is None:
     page_login()
     st.divider()
-    if st.button("Non hai un account? **Registrati come Paziente**", use_container_width=True):
+    if st.button("Non hai un account? **Registrati come Paziente**", width="stretch"):
         st.session_state["show_register"] = True
         st.rerun()
 
