@@ -3275,6 +3275,11 @@ def page_admin_richieste_nut():
                 if c3.button("❌ Rifiuta", key=f"rif_nut_{req['id']}", width="stretch"):
                     db.reject_nutritionist_request(req["id"], motivo)
                     st.warning("Richiesta rifiutata.")
+                    if req.get("email_studio"):
+                        db.send_notification_rifiuto_nutrizionista(
+                            req["email_studio"],
+                            req.get("nome", ""),
+                            motivo)
                     st.rerun()
 
     with tab_storico:

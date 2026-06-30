@@ -1299,6 +1299,21 @@ Il sistema NutriNext
     return _send_email(to_admin_email, "NutriNext — Nuova richiesta nutrizionista", body)
 
 
+def send_notification_rifiuto_nutrizionista(to_email: str, nome: str,
+                                             motivo: str = "") -> tuple[bool, str]:
+    """Notifica al nutrizionista: richiesta rifiutata."""
+    body = f"""Ciao {nome},
+
+la tua richiesta di registrazione a NutriNext è stata esaminata ma non è stata approvata.
+
+{"Motivazione: " + motivo if motivo else "Per ulteriori informazioni puoi contattarci via email."}
+
+Cordiali saluti,
+Il team NutriNext
+"""
+    return _send_email(to_email, "NutriNext — Richiesta di registrazione non approvata", body)
+
+
 def send_notification_approvazione_nutrizionista(to_email: str, nome: str,
                                                   username: str,
                                                   app_url: str = "") -> tuple[bool, str]:
