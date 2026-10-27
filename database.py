@@ -1318,6 +1318,137 @@ Il team NutriNext
     return _send_email(to_email, "NutriNext — Il tuo account è stato approvato!", body)
 
 
+# ==============================================================================
+# CALENDARIO — ICS e inviti
+# ==============================================================================
+
+def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
+                 nut_email: str, nut_nome: str,
+                 patient_email: str, patient_nome: str) -> str:
+    """Genera contenuto file .ics (RFC 5545) compatibile con Apple, Google, Outlook."""
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    try:
+        dt_start = datetime.strptime(str(data_ora_str)[:16], "%Y-%m-%d %H:%M")
+    except Exception:
+        dt_start = datetime.now()
+
+    dt_end = dt_start + timedelta(minutes=int(durata_min or 60))
+
+    def _fmt(dt):
+        return dt.strftime("%Y%m%dT%H%M%S")
+
+    uid     = str(uuid4())
+    summary = f"Visita {tipo} — NutriNext"
+    desc    = (note or "").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//NutriNext//NutriNext//IT",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:{uid}@nutrinextpro.it",
+        f"DTSTART:{_fmt(dt_start)}",
+        f"DTEND:{_fmt(dt_end)}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{desc}",
+        f"ORGANIZER;CN={nut_nome}:mailto:{nut_email}",
+        f"ATTENDEE;CN={patient_nome};RSVP=TRUE:mailto:{patient_email}",
+        "STATUS:CONFIRMED",
+        "SEQUENCE:0",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(lines)
+
+
+def send_appointment_invite(data_ora_str: str, durata_min: int, tipo: str,
+                             note: str, nut_email: str, nut_nome: str,
+                             patient_email: str, patient_nome: str) -> tuple[bool, str]:
+    """Invia invito calendario a nutrizionista e paziente (ICS + link Google/Outlook)."""
+    import resend, base64
+    from datetime import datetime, timedelta
+    from urllib.parse import quote
+
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    from_   = os.environ.get("RESEND_FROM", "NutriNext <noreply@nutrinextpro.it>")
+    if not api_key:
+        return False, "RESEND_API_KEY mancante."
+    resend.api_key = api_key
+
+    # Parsing data/ora
+    try:
+        dt_start     = datetime.strptime(str(data_ora_str)[:16], "%Y-%m-%d %H:%M")
+        dt_end       = dt_start + timedelta(minutes=int(durata_min or 60))
+        data_display = dt_start.strftime("%d/%m/%Y alle %H:%M")
+        gcal_dates   = f"{dt_start.strftime('%Y%m%dT%H%M%S')}/{dt_end.strftime('%Y%m%dT%H%M%S')}"
+        out_start    = dt_start.strftime("%Y-%m-%dT%H:%M:%S")
+        out_end      = dt_end.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        data_display = str(data_ora_str)
+        gcal_dates   = ""
+        out_start = out_end = ""
+
+    title = f"Visita {tipo} — NutriNext"
+    desc  = note or ""
+
+    # Link calendario
+    gcal_url    = (
+        f"https://calendar.google.com/calendar/render?action=TEMPLATE"
+        f"&text={quote(title)}&dates={gcal_dates}&details={quote(desc)}&sf=true"
+    )
+    outlook_url = (
+        f"https://outlook.live.com/calendar/0/deeplink/compose"
+        f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}&body={quote(desc)}"
+    )
+
+    # Allegato ICS
+    ics_content = generate_ics(data_ora_str, durata_min, tipo, note,
+                                nut_email, nut_nome, patient_email, patient_nome)
+    ics_b64     = base64.b64encode(ics_content.encode("utf-8")).decode("utf-8")
+    attachment  = {"filename": "appuntamento.ics", "content": ics_b64}
+
+    note_line = f"\n  Note:   {note}" if note else ""
+    body_tpl  = (
+        "Ciao {nome},\n\n"
+        "hai un appuntamento NutriNext:\n\n"
+        "  Tipo:   {tipo}\n"
+        "  Data:   {data}\n"
+        "  Durata: {durata} minuti{note_line}\n\n"
+        "Aggiungi al tuo calendario:\n"
+        "• Google Calendar: {gcal}\n"
+        "• Outlook:         {outlook}\n"
+        "• Apple / altri:   apri l'allegato 'appuntamento.ics'\n\n"
+        "Cordiali saluti,\nIl team NutriNext\n"
+    )
+
+    errors = []
+    for to_email, nome in [(patient_email, patient_nome), (nut_email, f"Dr. {nut_nome}")]:
+        if not to_email:
+            continue
+        body = body_tpl.format(
+            nome=nome, tipo=tipo, data=data_display,
+            durata=durata_min, note_line=note_line,
+            gcal=gcal_url, outlook=outlook_url,
+        )
+        try:
+            resend.Emails.send({
+                "from":        from_,
+                "to":          [to_email],
+                "subject":     f"NutriNext — Appuntamento {data_display}",
+                "text":        body,
+                "attachments": [attachment],
+            })
+        except Exception as e:
+            errors.append(f"{to_email}: {e}")
+
+    if errors:
+        return False, "; ".join(errors)
+    return True, "Inviti calendario inviati."
+
+
 def send_notification_rifiuto_paziente(to_email: str, nome: str) -> tuple[bool, str]:
     """Notifica al paziente: richiesta rifiutata."""
     body = f"""Ciao {nome},

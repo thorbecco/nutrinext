@@ -1795,6 +1795,11 @@ def page_agenda():
         stato = f6.selectbox("Stato", ["Programmato","Completato","Annullato"],
             index=["Programmato","Completato","Annullato"].index(appt_edit.get("stato","Programmato")) if appt_edit else 0)
         note_a = st.text_input("Note", value=appt_edit.get("note",""))
+        invio_cal = st.checkbox(
+            "📅 Invia invito calendario (Google, Apple, Outlook) a paziente e nutrizionista",
+            value=True,
+            help="Verrà inviata un'email con allegato .ics e link per aggiungere l'evento al calendario."
+        )
 
         ba, bb = st.columns(2)
         if ba.button("💾 Salva appuntamento", type="primary", width="stretch"):
@@ -1810,6 +1815,24 @@ def page_agenda():
             except Exception as e:
                 st.error(f"Errore salvataggio appuntamento: {e}")
             else:
+                # Invio invito calendario se richiesto
+                if invio_cal and patient_id:
+                    paz_info      = db.get_patient(patient_id) or {}
+                    patient_email = paz_info.get("email", "")
+                    nut_nome      = f"{user.get('nome','')}{' ' + user.get('cognome','') if user.get('cognome') else ''}".strip()
+                    nut_email     = user.get("email", "")
+                    if patient_email and nut_email:
+                        ok, msg = db.send_appointment_invite(
+                            data_ora_str, durata, tipo, note_a,
+                            nut_email, nut_nome,
+                            patient_email, patient_name,
+                        )
+                        if ok:
+                            st.toast("📅 Inviti calendario inviati!", icon="✅")
+                        else:
+                            st.warning(f"Appuntamento salvato, ma invito non inviato: {msg}")
+                    elif not patient_email:
+                        st.info("📅 Email del paziente non configurata — invito calendario non inviato.")
                 st.rerun()
         if edit_id and bb.button("🗑️ Elimina", type="secondary", width="stretch"):
             try:
