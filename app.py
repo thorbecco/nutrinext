@@ -87,9 +87,29 @@ if ('serviceWorker' in navigator) {{
 </script>
 <style>
 [data-testid="stSidebar"] {{ background: {NN_BLUE}; }}
-[data-testid="stSidebar"] * {{ color: #e8f5e9 !important; }}
-[data-testid="stSidebar"] .stRadio label {{ color: #e8f5e9 !important; }}
+[data-testid="stSidebar"] * {{ color: #ffffff !important; }}
+[data-testid="stSidebar"] .stRadio label {{ color: #ffffff !important; }}
 [data-testid="stSidebar"] hr {{ border-color: rgba(255,255,255,0.15); }}
+[data-testid="stSidebar"] .stButton > button {{
+    background: rgba(255,255,255,0.10) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,0.20) !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+}}
+[data-testid="stSidebar"] .stButton > button:hover {{
+    background: rgba(255,255,255,0.20) !important;
+    border-color: rgba(255,255,255,0.40) !important;
+    color: #ffffff !important;
+}}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {{
+    background: {NN_GREEN} !important;
+    color: #ffffff !important;
+    border: none !important;
+}}
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {{
+    background: #4e9030 !important;
+}}
 .metric-card {{
     background: white; border-radius: 12px; padding: 20px 24px;
     box-shadow: 0 2px 8px rgba(10,37,64,0.10); border-left: 4px solid {NN_BLUE};
