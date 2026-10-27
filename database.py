@@ -1257,7 +1257,8 @@ def set_nutritionist_active(nut_id: int, active: bool):
 def delete_nutritionist_admin(nut_id: int):
     """Elimina un nutrizionista e tutti i suoi dati (CASCADE)."""
     with _conn() as cur:
-        # Elimina in ordine per rispettare FK
+        # Elimina in ordine rispettando i vincoli FK:
+        # prima le tabelle figlie, poi patients, poi users
         cur.execute("""DELETE FROM messages WHERE patient_id IN
             (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
         cur.execute("""DELETE FROM diet_items WHERE plan_id IN
@@ -1267,12 +1268,14 @@ def delete_nutritionist_admin(nut_id: int):
             (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
         cur.execute("""DELETE FROM visits WHERE patient_id IN
             (SELECT id FROM patients WHERE nutritionist_id=%s)""", (nut_id,))
-        cur.execute("DELETE FROM patients WHERE nutritionist_id=%s", (nut_id,))
+        # Gli appuntamenti devono essere eliminati PRIMA dei pazienti (FK patient_id)
         cur.execute("DELETE FROM appointments WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM patients WHERE nutritionist_id=%s", (nut_id,))
         cur.execute("DELETE FROM templates WHERE nutritionist_id=%s", (nut_id,))
         cur.execute("DELETE FROM invite_tokens WHERE nutritionist_id=%s", (nut_id,))
         cur.execute("DELETE FROM patient_requests WHERE nutritionist_id=%s", (nut_id,))
         cur.execute("DELETE FROM bug_reports WHERE nutritionist_id=%s", (nut_id,))
+        cur.execute("DELETE FROM user_sessions WHERE user_id=%s AND role!='patient'", (nut_id,))
         cur.execute("DELETE FROM users WHERE id=%s", (nut_id,))
 
 def delete_patient_admin(patient_id: int):
@@ -1283,6 +1286,7 @@ def delete_patient_admin(patient_id: int):
             (SELECT id FROM diet_plans WHERE patient_id=%s)""", (patient_id,))
         cur.execute("DELETE FROM diet_plans WHERE patient_id=%s", (patient_id,))
         cur.execute("DELETE FROM visits WHERE patient_id=%s", (patient_id,))
+        cur.execute("DELETE FROM appointments WHERE patient_id=%s", (patient_id,))
         cur.execute("DELETE FROM patients WHERE id=%s", (patient_id,))
 
 
