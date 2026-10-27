@@ -468,9 +468,11 @@ def _sqlite_init(cur):
         ("users", "logo_path",        "TEXT DEFAULT ''"),
         ("users", "logo_data",        "TEXT DEFAULT ''"),
         ("users", "last_login",       "TEXT"),
-        ("users",       "is_active",        "INTEGER DEFAULT 1"),
-        ("diet_plans",  "freq_proteiche",   "TEXT DEFAULT ''"),
-        ("diet_items",  "componenti_json",  "TEXT DEFAULT NULL"),
+        ("users",         "is_active",          "INTEGER DEFAULT 1"),
+        ("diet_plans",    "freq_proteiche",      "TEXT DEFAULT ''"),
+        ("diet_items",    "componenti_json",     "TEXT DEFAULT NULL"),
+        ("appointments",  "luogo",               "TEXT DEFAULT ''"),
+        ("appointments",  "patient_ext_email",   "TEXT DEFAULT ''"),
     ]
     for table, col, typedef in _migrations:
         try:
@@ -499,10 +501,12 @@ def _pg_migrate(cur):
     l'eccezione non abbandona l'intera transazione.
     """
     migrations = [
-        ("users",       "is_active",       "INTEGER DEFAULT 1"),
-        ("diet_plans",  "freq_proteiche",  "TEXT DEFAULT ''"),
-        ("diet_items",  "componenti_json", "TEXT DEFAULT NULL"),
-        ("nutritionist_requests", "id",    None),  # solo check esistenza tabella
+        ("users",         "is_active",          "INTEGER DEFAULT 1"),
+        ("diet_plans",    "freq_proteiche",      "TEXT DEFAULT ''"),
+        ("diet_items",    "componenti_json",     "TEXT DEFAULT NULL"),
+        ("appointments",  "luogo",               "TEXT DEFAULT ''"),
+        ("appointments",  "patient_ext_email",   "TEXT DEFAULT ''"),
+        ("nutritionist_requests", "id",          None),  # solo check esistenza tabella
     ]
     for table, col, typedef in migrations:
         if typedef is None:
@@ -739,19 +743,23 @@ def get_appointments(nutritionist_id: int, from_date=None, to_date=None) -> list
         return _fetchall(cur)
 
 def save_appointment(nutritionist_id, patient_id, patient_name, data_ora,
-                     durata_min, tipo, note, stato, appt_id=None):
+                     durata_min, tipo, note, stato, appt_id=None,
+                     luogo="", patient_ext_email=""):
     ret = " RETURNING id" if USE_POSTGRES else ""
     with _conn() as cur:
         if appt_id:
             cur.execute("""UPDATE appointments SET patient_id=%s,patient_name=%s,data_ora=%s,
-                durata_min=%s,tipo=%s,note=%s,stato=%s WHERE id=%s""",
-                (patient_id,patient_name,data_ora,durata_min,tipo,note,stato,appt_id))
+                durata_min=%s,tipo=%s,note=%s,stato=%s,luogo=%s,patient_ext_email=%s WHERE id=%s""",
+                (patient_id,patient_name,data_ora,durata_min,tipo,note,stato,
+                 luogo,patient_ext_email,appt_id))
         else:
             cur.execute(
                 f"""INSERT INTO appointments
-                    (nutritionist_id,patient_id,patient_name,data_ora,durata_min,tipo,note,stato)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s){ret}""",
-                (nutritionist_id,patient_id,patient_name,data_ora,durata_min,tipo,note,stato))
+                    (nutritionist_id,patient_id,patient_name,data_ora,durata_min,
+                     tipo,note,stato,luogo,patient_ext_email)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s){ret}""",
+                (nutritionist_id,patient_id,patient_name,data_ora,durata_min,
+                 tipo,note,stato,luogo,patient_ext_email))
 
 def delete_appointment(appt_id: int):
     with _conn() as cur:
@@ -1324,7 +1332,8 @@ Il team NutriNext
 
 def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
                  nut_email: str, nut_nome: str,
-                 patient_email: str, patient_nome: str) -> str:
+                 patient_email: str, patient_nome: str,
+                 luogo: str = "") -> str:
     """Genera contenuto file .ics (RFC 5545) compatibile con Apple, Google, Outlook."""
     from datetime import datetime, timedelta
     from uuid import uuid4
@@ -1342,6 +1351,7 @@ def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
     uid     = str(uuid4())
     summary = f"Visita {tipo} — NutriNext"
     desc    = (note or "").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,")
+    loc     = (luogo or "").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,")
 
     lines = [
         "BEGIN:VCALENDAR",
@@ -1354,6 +1364,10 @@ def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
         f"DTEND:{_fmt(dt_end)}",
         f"SUMMARY:{summary}",
         f"DESCRIPTION:{desc}",
+    ]
+    if loc:
+        lines.append(f"LOCATION:{loc}")
+    lines += [
         f"ORGANIZER;CN={nut_nome}:mailto:{nut_email}",
         f"ATTENDEE;CN={patient_nome};RSVP=TRUE:mailto:{patient_email}",
         "STATUS:CONFIRMED",
@@ -1365,8 +1379,8 @@ def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
 
 
 def appointment_calendar_links(data_ora_str: str, durata_min: int,
-                               tipo: str, note: str) -> dict:
-    """Restituisce i link calendario (Google, Outlook) e il contenuto ICS grezzo."""
+                               tipo: str, note: str, luogo: str = "") -> dict:
+    """Restituisce i link calendario (Google, Outlook) con luogo incluso."""
     from datetime import datetime, timedelta
     from urllib.parse import quote
 
@@ -1382,19 +1396,28 @@ def appointment_calendar_links(data_ora_str: str, durata_min: int,
 
     title = f"Visita {tipo} — NutriNext"
     desc  = note or ""
+    loc   = luogo or ""
+
+    gcal = (
+        f"https://calendar.google.com/calendar/render?action=TEMPLATE"
+        f"&text={quote(title)}&dates={gcal_dates}&details={quote(desc)}&sf=true"
+    )
+    if loc:
+        gcal += f"&location={quote(loc)}"
+
+    out_body = f"{desc}\n\nLuogo: {loc}" if loc else desc
 
     return {
-        "google":  (
-            f"https://calendar.google.com/calendar/render?action=TEMPLATE"
-            f"&text={quote(title)}&dates={gcal_dates}&details={quote(desc)}&sf=true"
-        ),
-        "outlook": (
+        "google":    gcal,
+        "outlook":   (
             f"https://outlook.live.com/calendar/0/deeplink/compose"
-            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}&body={quote(desc)}"
+            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}"
+            f"&body={quote(out_body)}&location={quote(loc)}"
         ),
         "office365": (
             f"https://outlook.office.com/calendar/0/deeplink/compose"
-            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}&body={quote(desc)}"
+            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}"
+            f"&body={quote(out_body)}&location={quote(loc)}"
         ),
     }
 
@@ -1402,7 +1425,7 @@ def appointment_calendar_links(data_ora_str: str, durata_min: int,
 def send_patient_appointment_email(data_ora_str: str, durata_min: int, tipo: str,
                                     note: str, nut_nome: str,
                                     patient_email: str, patient_nome: str,
-                                    nut_email: str = "") -> tuple[bool, str]:
+                                    nut_email: str = "", luogo: str = "") -> tuple[bool, str]:
     """Invia email al SOLO PAZIENTE con ICS allegato + link calendario."""
     import resend, base64
     from datetime import datetime, timedelta
@@ -1423,22 +1446,23 @@ def send_patient_appointment_email(data_ora_str: str, durata_min: int, tipo: str
     except Exception:
         data_display = str(data_ora_str)
 
-    links = appointment_calendar_links(data_ora_str, durata_min, tipo, note)
+    links = appointment_calendar_links(data_ora_str, durata_min, tipo, note, luogo)
 
     # ICS allegato
     ics_content = generate_ics(data_ora_str, durata_min, tipo, note,
                                 nut_email or from_, nut_nome,
-                                patient_email, patient_nome)
+                                patient_email, patient_nome, luogo)
     ics_b64    = base64.b64encode(ics_content.encode("utf-8")).decode("utf-8")
     attachment = {"filename": "appuntamento.ics", "content": ics_b64}
 
-    note_line = f"\n  Note:   {note}" if note else ""
+    note_line  = f"\n  Note:   {note}" if note else ""
+    luogo_line = f"\n  Luogo:  {luogo}" if luogo else ""
     body = (
         f"Ciao {patient_nome},\n\n"
         f"il tuo nutrizionista Dr. {nut_nome} ha fissato un appuntamento:\n\n"
         f"  Tipo:   {tipo}\n"
         f"  Data:   {data_display}\n"
-        f"  Durata: {durata_min} minuti{note_line}\n\n"
+        f"  Durata: {durata_min} minuti{luogo_line}{note_line}\n\n"
         f"Aggiungi al tuo calendario:\n"
         f"• Google Calendar:  {links['google']}\n"
         f"• Outlook.com:      {links['outlook']}\n"

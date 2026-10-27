@@ -1803,9 +1803,13 @@ def page_agenda():
         paz_sel   = f3.selectbox("Paziente", paz_nomi,
             index=paz_nomi.index(next((k for k,v in paz_map.items() if v==appt_edit.get("patient_id")),
             paz_nomi[0])) if appt_edit else 0)
-        paz_nome_ext = ""
+        paz_nome_ext  = ""
+        paz_email_ext = ""
         if paz_sel == paz_nomi[0]:
-            paz_nome_ext = f3.text_input("Nome paziente esterno", value=appt_edit.get("patient_name",""))
+            paz_nome_ext  = f3.text_input("Nome paziente esterno", value=appt_edit.get("patient_name",""))
+            paz_email_ext = f3.text_input("✉️ Email paziente esterno (per invito calendario)",
+                value=appt_edit.get("patient_ext_email",""),
+                placeholder="email@esempio.it")
         durata   = f4.selectbox("Durata", [30,45,60,90,120],
             index=[30,45,60,90,120].index(appt_edit.get("durata_min",60)) if appt_edit else 2)
 
@@ -1814,6 +1818,8 @@ def page_agenda():
             index=list(COLORI_TIPO.keys()).index(appt_edit.get("tipo","Prima Visita")) if appt_edit else 0)
         stato = f6.selectbox("Stato", ["Programmato","Completato","Annullato"],
             index=["Programmato","Completato","Annullato"].index(appt_edit.get("stato","Programmato")) if appt_edit else 0)
+        luogo_a = st.text_input("📍 Luogo", value=appt_edit.get("luogo",""),
+            placeholder="es. Studio Via Roma 1, Milano — oppure Google Meet: https://...")
         note_a = st.text_input("Note", value=appt_edit.get("note",""))
         invio_cal = st.checkbox(
             "📅 Notifica appuntamento (invia email al paziente con link calendario)",
@@ -1823,32 +1829,40 @@ def page_agenda():
 
         ba, bb = st.columns(2)
         if ba.button("💾 Salva appuntamento", type="primary", width="stretch"):
-            patient_id   = paz_map.get(paz_sel)
-            patient_name = paz_sel if paz_sel!=paz_nomi[0] else paz_nome_ext
-            data_ora_str = f"{data_appt} {ora_appt.strftime('%H:%M')}"
+            patient_id    = paz_map.get(paz_sel)
+            patient_name  = paz_sel if paz_sel!=paz_nomi[0] else paz_nome_ext
+            data_ora_str  = f"{data_appt} {ora_appt.strftime('%H:%M')}"
+            # Email paziente: registrato → da DB, esterno → campo form
+            patient_email_final = ""
+            if patient_id:
+                paz_info            = db.get_patient(patient_id) or {}
+                patient_email_final = paz_info.get("email", "")
+            else:
+                patient_email_final = paz_email_ext.strip()
+
             try:
                 db.save_appointment(user["id"], patient_id, patient_name,
-                    data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id)
+                    data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id,
+                    luogo=luogo_a, patient_ext_email=paz_email_ext.strip())
                 _invalidate_nut_cache(user["id"])
                 st.session_state.edit_appt_id = None
             except Exception as e:
                 st.error(f"Errore salvataggio appuntamento: {e}")
             else:
-                # Email al paziente
-                if invio_cal and patient_id:
-                    paz_info      = db.get_patient(patient_id) or {}
-                    patient_email = paz_info.get("email", "")
-                    nut_nome      = f"{user.get('nome','')} {user.get('cognome','')}".strip()
-                    if patient_email:
+                # Email al paziente (registrato o esterno)
+                if invio_cal:
+                    nut_nome = f"{user.get('nome','')} {user.get('cognome','')}".strip()
+                    if patient_email_final:
                         ok, msg = db.send_patient_appointment_email(
                             data_ora_str, durata, tipo, note_a,
-                            nut_nome, patient_email, patient_name,
+                            nut_nome, patient_email_final, patient_name,
                             nut_email=user.get("email",""),
+                            luogo=luogo_a,
                         )
                         if not ok:
                             st.warning(f"Email paziente non inviata: {msg}")
                     else:
-                        st.info("📅 Email del paziente non configurata — notifica non inviata.")
+                        st.info("📅 Email paziente non disponibile — notifica non inviata.")
 
                 # Salva dati per link calendario nutrizionista
                 st.session_state["_cal_appt"] = {
@@ -1856,6 +1870,7 @@ def page_agenda():
                     "durata":       durata,
                     "tipo":         tipo,
                     "note":         note_a,
+                    "luogo":        luogo_a,
                 }
                 st.rerun()
 
@@ -1863,13 +1878,13 @@ def page_agenda():
     if st.session_state.get("_cal_appt"):
         cal = st.session_state["_cal_appt"]
         links = db.appointment_calendar_links(
-            cal["data_ora_str"], cal["durata"], cal["tipo"], cal["note"]
+            cal["data_ora_str"], cal["durata"], cal["tipo"], cal["note"], cal.get("luogo","")
         )
         # Genera ICS per Apple Calendar
         nut_nome_cal = f"{user.get('nome','')} {user.get('cognome','')}".strip()
         ics_content  = db.generate_ics(
             cal["data_ora_str"], cal["durata"], cal["tipo"], cal["note"],
-            user.get("email",""), nut_nome_cal, "", ""
+            user.get("email",""), nut_nome_cal, "", "", cal.get("luogo","")
         )
 
         st.success("✅ Appuntamento salvato!")
