@@ -1816,9 +1816,9 @@ def page_agenda():
             index=["Programmato","Completato","Annullato"].index(appt_edit.get("stato","Programmato")) if appt_edit else 0)
         note_a = st.text_input("Note", value=appt_edit.get("note",""))
         invio_cal = st.checkbox(
-            "📅 Invia invito calendario (Google, Apple, Outlook) a paziente e nutrizionista",
+            "📅 Notifica appuntamento (invia email al paziente con link calendario)",
             value=True,
-            help="Verrà inviata un'email con allegato .ics e link per aggiungere l'evento al calendario."
+            help="Il paziente riceve un'email con link per aggiungere l'evento a Google, Outlook, Apple Calendar."
         )
 
         ba, bb = st.columns(2)
@@ -1831,29 +1831,63 @@ def page_agenda():
                     data_ora_str, durata, tipo, note_a, stato, appt_id=edit_id)
                 _invalidate_nut_cache(user["id"])
                 st.session_state.edit_appt_id = None
-                st.success("Salvato.")
             except Exception as e:
                 st.error(f"Errore salvataggio appuntamento: {e}")
             else:
-                # Invio invito calendario se richiesto
+                # Email al paziente
                 if invio_cal and patient_id:
                     paz_info      = db.get_patient(patient_id) or {}
                     patient_email = paz_info.get("email", "")
-                    nut_nome      = f"{user.get('nome','')}{' ' + user.get('cognome','') if user.get('cognome') else ''}".strip()
-                    nut_email     = user.get("email", "")
-                    if patient_email and nut_email:
-                        ok, msg = db.send_appointment_invite(
+                    nut_nome      = f"{user.get('nome','')} {user.get('cognome','')}".strip()
+                    if patient_email:
+                        ok, msg = db.send_patient_appointment_email(
                             data_ora_str, durata, tipo, note_a,
-                            nut_email, nut_nome,
-                            patient_email, patient_name,
+                            nut_nome, patient_email, patient_name,
+                            nut_email=user.get("email",""),
                         )
-                        if ok:
-                            st.toast("📅 Inviti calendario inviati!", icon="✅")
-                        else:
-                            st.warning(f"Appuntamento salvato, ma invito non inviato: {msg}")
-                    elif not patient_email:
-                        st.info("📅 Email del paziente non configurata — invito calendario non inviato.")
+                        if not ok:
+                            st.warning(f"Email paziente non inviata: {msg}")
+                    else:
+                        st.info("📅 Email del paziente non configurata — notifica non inviata.")
+
+                # Salva dati per link calendario nutrizionista
+                st.session_state["_cal_appt"] = {
+                    "data_ora_str": data_ora_str,
+                    "durata":       durata,
+                    "tipo":         tipo,
+                    "note":         note_a,
+                }
                 st.rerun()
+
+    # ── Link calendario per il NUTRIZIONISTA (appare dopo il salvataggio) ──────
+    if st.session_state.get("_cal_appt"):
+        cal = st.session_state["_cal_appt"]
+        links = db.appointment_calendar_links(
+            cal["data_ora_str"], cal["durata"], cal["tipo"], cal["note"]
+        )
+        # Genera ICS per Apple Calendar
+        nut_nome_cal = f"{user.get('nome','')} {user.get('cognome','')}".strip()
+        ics_content  = db.generate_ics(
+            cal["data_ora_str"], cal["durata"], cal["tipo"], cal["note"],
+            user.get("email",""), nut_nome_cal, "", ""
+        )
+
+        st.success("✅ Appuntamento salvato!")
+        st.markdown("#### 📅 Aggiungi al tuo calendario")
+        c1, c2, c3 = st.columns(3)
+        c1.link_button("🔴 Google Calendar", links["google"], use_container_width=True)
+        c2.link_button("🔵 Outlook.com",     links["outlook"], use_container_width=True)
+        c3.link_button("🟦 Office 365",      links["office365"], use_container_width=True)
+        st.download_button(
+            "🍎 Apple Calendar (.ics)",
+            data=ics_content.encode("utf-8"),
+            file_name="appuntamento.ics",
+            mime="text/calendar",
+            use_container_width=True,
+        )
+        if st.button("✖ Chiudi", use_container_width=True):
+            del st.session_state["_cal_appt"]
+            st.rerun()
         if edit_id and bb.button("🗑️ Elimina", type="secondary", width="stretch"):
             try:
                 db.delete_appointment(edit_id)

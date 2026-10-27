@@ -1364,6 +1364,102 @@ def generate_ics(data_ora_str: str, durata_min: int, tipo: str, note: str,
     return "\r\n".join(lines)
 
 
+def appointment_calendar_links(data_ora_str: str, durata_min: int,
+                               tipo: str, note: str) -> dict:
+    """Restituisce i link calendario (Google, Outlook) e il contenuto ICS grezzo."""
+    from datetime import datetime, timedelta
+    from urllib.parse import quote
+
+    try:
+        dt_start = datetime.strptime(str(data_ora_str)[:16], "%Y-%m-%d %H:%M")
+        dt_end   = dt_start + timedelta(minutes=int(durata_min or 60))
+        gcal_dates = f"{dt_start.strftime('%Y%m%dT%H%M%S')}/{dt_end.strftime('%Y%m%dT%H%M%S')}"
+        out_start  = dt_start.strftime("%Y-%m-%dT%H:%M:%S")
+        out_end    = dt_end.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        gcal_dates = ""
+        out_start = out_end = ""
+
+    title = f"Visita {tipo} — NutriNext"
+    desc  = note or ""
+
+    return {
+        "google":  (
+            f"https://calendar.google.com/calendar/render?action=TEMPLATE"
+            f"&text={quote(title)}&dates={gcal_dates}&details={quote(desc)}&sf=true"
+        ),
+        "outlook": (
+            f"https://outlook.live.com/calendar/0/deeplink/compose"
+            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}&body={quote(desc)}"
+        ),
+        "office365": (
+            f"https://outlook.office.com/calendar/0/deeplink/compose"
+            f"?subject={quote(title)}&startdt={out_start}&enddt={out_end}&body={quote(desc)}"
+        ),
+    }
+
+
+def send_patient_appointment_email(data_ora_str: str, durata_min: int, tipo: str,
+                                    note: str, nut_nome: str,
+                                    patient_email: str, patient_nome: str,
+                                    nut_email: str = "") -> tuple[bool, str]:
+    """Invia email al SOLO PAZIENTE con ICS allegato + link calendario."""
+    import resend, base64
+    from datetime import datetime, timedelta
+
+    api_key = os.environ.get("RESEND_API_KEY", "")
+    from_   = os.environ.get("RESEND_FROM", "NutriNext <noreply@nutrinextpro.it>")
+    if not api_key:
+        return False, "RESEND_API_KEY mancante."
+    if not patient_email:
+        return False, "Email paziente mancante."
+    resend.api_key = api_key
+
+    # Data display
+    try:
+        dt_start     = datetime.strptime(str(data_ora_str)[:16], "%Y-%m-%d %H:%M")
+        dt_end       = dt_start + timedelta(minutes=int(durata_min or 60))
+        data_display = dt_start.strftime("%d/%m/%Y alle %H:%M")
+    except Exception:
+        data_display = str(data_ora_str)
+
+    links = appointment_calendar_links(data_ora_str, durata_min, tipo, note)
+
+    # ICS allegato
+    ics_content = generate_ics(data_ora_str, durata_min, tipo, note,
+                                nut_email or from_, nut_nome,
+                                patient_email, patient_nome)
+    ics_b64    = base64.b64encode(ics_content.encode("utf-8")).decode("utf-8")
+    attachment = {"filename": "appuntamento.ics", "content": ics_b64}
+
+    note_line = f"\n  Note:   {note}" if note else ""
+    body = (
+        f"Ciao {patient_nome},\n\n"
+        f"il tuo nutrizionista Dr. {nut_nome} ha fissato un appuntamento:\n\n"
+        f"  Tipo:   {tipo}\n"
+        f"  Data:   {data_display}\n"
+        f"  Durata: {durata_min} minuti{note_line}\n\n"
+        f"Aggiungi al tuo calendario:\n"
+        f"• Google Calendar:  {links['google']}\n"
+        f"• Outlook.com:      {links['outlook']}\n"
+        f"• Office 365:       {links['office365']}\n"
+        f"• Apple / altri:    apri l'allegato 'appuntamento.ics'\n\n"
+        f"Cordiali saluti,\nIl team NutriNext\n"
+    )
+
+    try:
+        resend.Emails.send({
+            "from":        from_,
+            "to":          [patient_email],
+            "subject":     f"NutriNext — Appuntamento {data_display}",
+            "text":        body,
+            "attachments": [attachment],
+        })
+        return True, "Email inviata al paziente."
+    except Exception as e:
+        return False, str(e)
+
+
 def send_appointment_invite(data_ora_str: str, durata_min: int, tipo: str,
                              note: str, nut_email: str, nut_nome: str,
                              patient_email: str, patient_nome: str) -> tuple[bool, str]:
