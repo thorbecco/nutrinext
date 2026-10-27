@@ -6,6 +6,42 @@ import json, math, os, io, base64, secrets, re, logging
 from datetime import datetime, date, timedelta
 from urllib.parse import quote as _url_quote
 
+try:
+    import extra_streamlit_components as stx
+    _COOKIE_AVAILABLE = True
+except ImportError:
+    _COOKIE_AVAILABLE = False
+
+_COOKIE_NAME = "nnx_session"
+
+def _get_cookie_manager():
+    """Restituisce il CookieManager (singleton per sessione Streamlit)."""
+    if not _COOKIE_AVAILABLE:
+        return None
+    if "cookie_manager" not in st.session_state:
+        st.session_state["cookie_manager"] = stx.CookieManager(key="nnx_cm")
+    return st.session_state["cookie_manager"]
+
+def _do_logout(next_page: str = "dashboard"):
+    """Elimina cookie + token DB e resetta la sessione."""
+    token = st.session_state.get("_session_token")
+    if token:
+        try:
+            db.delete_session_token(token)
+        except Exception:
+            pass
+        try:
+            cm = _get_cookie_manager()
+            if cm:
+                cm.delete(_COOKIE_NAME)
+        except Exception:
+            pass
+    for k in ["user","patient_obj","sel_patient_id","edit_appt_id",
+               "piano_corrente","note_piano","_session_token"]:
+        st.session_state[k] = None if k not in ["piano_corrente","note_piano"] else ([] if k=="piano_corrente" else "")
+    st.session_state.page = next_page
+    st.rerun()
+
 # Path assoluto della cartella dell'app (necessario per st.image con path relativi)
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 def _img(relative: str) -> str:
@@ -172,9 +208,25 @@ for k, v in {
     "user": None, "patient_obj": None, "page": "dashboard",
     "sel_patient_id": None, "piano_corrente": [], "note_piano": "",
     "edit_appt_id": None, "componenti_composto": [], "freq_proteiche": "",
+    "_session_token": None,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# ── Ripristino sessione da cookie (se non già loggato) ────────────────────────
+_cm = _get_cookie_manager()
+if _cm is not None and st.session_state.user is None:
+    try:
+        _saved_token = _cm.get(_COOKIE_NAME)
+        if _saved_token:
+            _restored = db.get_user_from_session_token(_saved_token)
+            if _restored and not _restored.get("_suspended"):
+                st.session_state.user          = _restored
+                st.session_state._session_token = _saved_token
+                if _restored.get("_patient"):
+                    st.session_state.patient_obj = _restored
+    except Exception:
+        pass
 
 # ==============================================================================
 # DATABASE ALIMENTI
@@ -1531,8 +1583,21 @@ def page_login():
             if user and user.get("_suspended"):
                 st.error("⛔ Account sospeso. Contatta l'amministratore NutriNext.")
             elif user:
-                if user.get("_patient"):
-                    st.session_state.user = user
+                is_pat = bool(user.get("_patient"))
+                uid    = user.get("id")
+                role   = user.get("role", "patient" if is_pat else "nutritionist")
+                # Crea token persistente e salva nel cookie
+                try:
+                    token = db.create_session_token(uid, role, is_patient=is_pat)
+                    cm    = _get_cookie_manager()
+                    if cm is not None:
+                        cm.set(_COOKIE_NAME, token,
+                               expires_at=datetime.now() + timedelta(days=30))
+                    st.session_state._session_token = token
+                except Exception:
+                    pass
+                if is_pat:
+                    st.session_state.user        = user
                     st.session_state.patient_obj = user
                 else:
                     st.session_state.user = user
@@ -1666,9 +1731,7 @@ def sidebar_nutrizionista():
 
     st.sidebar.divider()
     if st.sidebar.button("🚪 Logout", width="stretch"):
-        for k in ["user","patient_obj","page","sel_patient_id","piano_corrente","note_piano","edit_appt_id"]:
-            st.session_state[k] = None if k in ["user","patient_obj","sel_patient_id","edit_appt_id"] else ([] if k=="piano_corrente" else ("" if k=="note_piano" else "dashboard"))
-        st.rerun()
+        _do_logout("dashboard")
 
 # ==============================================================================
 # ─────────────────────────── DASHBOARD ────────────────────────────────────────
@@ -2624,7 +2687,7 @@ def portale_paziente():
             st.session_state.page = key; st.rerun()
     st.sidebar.divider()
     if st.sidebar.button("🚪 Logout", width="stretch"):
-        st.session_state.user = None; st.session_state.page = "home_p"; st.rerun()
+        _do_logout("home_p")
 
     page = st.session_state.page
     plan     = _cached_active_plan(pid)
@@ -3216,9 +3279,7 @@ def sidebar_admin():
             st.rerun()
     st.sidebar.divider()
     if st.sidebar.button("🚪 Logout", width="stretch"):
-        st.session_state.user = None
-        st.session_state.page = "admin_overview"
-        st.rerun()
+        _do_logout("admin_overview")
 
 def page_admin_overview():
     st.title("📊 Overview Piattaforma NutriNext")

@@ -295,6 +295,15 @@ def _pg_init(cur):
             admin_note       TEXT DEFAULT '',
             created_at       TIMESTAMPTZ DEFAULT NOW()
         )""",
+        """CREATE TABLE IF NOT EXISTS user_sessions (
+            id         SERIAL PRIMARY KEY,
+            token      TEXT UNIQUE NOT NULL,
+            user_id    INTEGER,
+            role       TEXT NOT NULL,
+            is_patient BOOLEAN DEFAULT FALSE,
+            expires_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )""",
     ]
     for stmt in stmts:
         cur.execute(stmt)
@@ -456,6 +465,15 @@ def _sqlite_init(cur):
         stato            TEXT DEFAULT 'In attesa',
         admin_note       TEXT DEFAULT '',
         created_at       TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        token      TEXT UNIQUE NOT NULL,
+        user_id    INTEGER,
+        role       TEXT NOT NULL,
+        is_patient INTEGER DEFAULT 0,
+        expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
     );
     """)
     # Migration colonne mancanti
@@ -645,6 +663,86 @@ def login(username: str, password: str):
         )
         row = _fetchone(cur)
         return {"_patient": True, **row} if row else None
+
+def create_session_token(user_id: int, role: str, is_patient: bool = False) -> str:
+    """Crea e salva nel DB un token di sessione persistente (30 giorni)."""
+    import secrets
+    token    = secrets.token_urlsafe(32)
+    expires  = (datetime.now() + timedelta(days=30)).isoformat()
+    ret      = " RETURNING id" if USE_POSTGRES else ""
+    is_pat   = is_patient
+    with _conn() as cur:
+        try:
+            cur.execute(
+                f"INSERT INTO user_sessions (token, user_id, role, is_patient, expires_at) "
+                f"VALUES (%s, %s, %s, %s, %s){ret}",
+                (token, user_id, role, is_pat, expires)
+            )
+        except Exception:
+            pass
+    return token
+
+def get_user_from_session_token(token: str):
+    """Restituisce il dict utente associato al token se ancora valido, altrimenti None."""
+    if not token:
+        return None
+    with _conn() as cur:
+        cur.execute(
+            "SELECT * FROM user_sessions WHERE token=%s", (token,)
+        )
+        row = _fetchone(cur)
+    if not row:
+        return None
+    # Controlla scadenza
+    try:
+        exp = datetime.fromisoformat(str(row["expires_at"]).replace("Z","").split("+")[0])
+        if datetime.now() > exp:
+            delete_session_token(token)
+            return None
+    except Exception:
+        pass
+    user_id    = row.get("user_id")
+    role       = row.get("role", "")
+    is_patient = bool(row.get("is_patient"))
+    if is_patient:
+        with _conn() as cur:
+            cur.execute(
+                "SELECT p.*, u.username as nut_username FROM patients p "
+                "JOIN users u ON u.id=p.nutritionist_id WHERE p.id=%s", (user_id,)
+            )
+            u = _fetchone(cur)
+        return {"_patient": True, **u} if u else None
+    else:
+        with _conn() as cur:
+            cur.execute("SELECT * FROM users WHERE id=%s", (user_id,))
+            u = _fetchone(cur)
+        if not u:
+            return None
+        if u.get("is_active", 1) == 0:
+            return {"_suspended": True}
+        return u
+
+def delete_session_token(token: str):
+    """Elimina un token di sessione dal DB (logout)."""
+    if not token:
+        return
+    with _conn() as cur:
+        try:
+            cur.execute("DELETE FROM user_sessions WHERE token=%s", (token,))
+        except Exception:
+            pass
+
+def cleanup_expired_sessions():
+    """Rimuove i token scaduti (chiamabile periodicamente)."""
+    with _conn() as cur:
+        try:
+            cur.execute(
+                "DELETE FROM user_sessions WHERE expires_at < %s",
+                (datetime.now().isoformat(),)
+            )
+        except Exception:
+            pass
+
 
 @functools.lru_cache(maxsize=64)
 def get_nutritionist(nut_id: int) -> dict:
