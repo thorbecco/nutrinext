@@ -1924,11 +1924,20 @@ def _form_paziente(nutritionist_id, patient_id=None):
         elif uname and " " in uname:
             st.error("Lo username non può contenere spazi.")
         else:
-            db.save_patient(nutritionist_id, nome, cognome, email, sesso,
-                str(data_n), tel, note_a, uname, pw, patient_id)
-            _invalidate_nut_cache(nutritionist_id)
-            st.success("Paziente salvato.")
-            st.rerun()
+            try:
+                db.save_patient(nutritionist_id, nome, cognome, email, sesso,
+                    str(data_n), tel, note_a, uname, pw, patient_id)
+                _invalidate_nut_cache(nutritionist_id)
+                st.success("Paziente salvato.")
+                st.rerun()
+            except Exception as e:
+                err = str(e).lower()
+                if "patients_username_key" in err or "unique" in err and "username" in err:
+                    st.error(f"⚠️ Username '{uname}' già in uso — scegli un altro username.")
+                elif "patients_email_key" in err or "unique" in err and "email" in err:
+                    st.error(f"⚠️ Email '{email}' già registrata per un altro paziente.")
+                else:
+                    st.error(f"Errore salvataggio: {e}")
 
 # ==============================================================================
 # ─────────────────────────── VISITA & BIA ─────────────────────────────────────
